@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/main_terms"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/assistant_surface">
+
+    <com.google.android.material.appbar.AppBarLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/assistant_primary"
+        app:elevation="0dp">
+
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            android:background="@color/assistant_primary"
+            app:navigationIcon="@drawable/ic_arrow_back"
+            app:titleTextColor="#FFFFFF"
+            app:title="Terms &amp; Conditions" />
+
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Effective Date: 24 March 2026\nLast Updated: 24 March 2026"
+                android:textColor="@color/assistant_hint"
+                android:textSize="13sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="These Terms of Service (&#8220;Terms&#8221;) govern your use of the Aura mobile application (&#8220;App&#8221;) provided by me (the developer operating as a sole trader). By downloading, installing, or using Aura, you agree to these Terms. If you do not agree, please do not use the App."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="24dp" />
+
+            <!-- Section 1 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="1. About Aura"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Aura is an AI-powered Android assistant that combines voice commands with screen understanding and control. It uses Android&#8217;s Accessibility Service and screenshots to read your screen, navigate apps, tap elements, play music, set reminders, and perform other tasks on your behalf."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 2 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="2. Eligibility"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="You must be at least 18 years old to use Aura. By using the App you confirm you meet this requirement."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 3 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="3. Accessibility Service and Screen Control"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Aura requires the Android Accessibility Service to function. This permission allows Aura to read screen content and simulate user actions (taps, swipes, text input, etc.). You can revoke this permission at any time in Android Settings. Aura captures and processes screenshots temporarily only when actively assisting you. These are not stored permanently on my servers unless you explicitly ask to save something."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 4 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="4. Bring Your Own API Key"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Aura supports connecting your own API keys from providers such as Anthropic (Claude), OpenAI, Google Gemini, xAI Grok, or others. You are responsible for obtaining, managing, and paying for your own API keys and must comply with the chosen provider&#8217;s terms of service. API keys are stored encrypted and I do not use them for any purpose other than providing the service."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 5 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="5. User Responsibilities and Actions Performed by Aura"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Aura acts only as your tool and performs actions based on your instructions. You are solely and fully responsible for all actions Aura takes on your device, including (but not limited to):\n\n\u2022 Sending messages or emails\n\u2022 Making purchases, payments, or financial transactions\n\u2022 Deleting content or changing settings\n\u2022 Any other app interactions\n\nYou must carefully review every proposed action before confirming it. Aura may make mistakes, misunderstand your intent, or take unintended actions.\n\nI am not responsible or liable if Aura causes you to lose money, makes unwanted purchases, incurs charges, or results in any financial loss, data loss, or other harm. You use Aura&#8217;s ability to control apps and perform actions entirely at your own risk."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 6 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="6. Prohibited Conduct"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="You may not use Aura to access accounts or perform actions without proper authorisation, engage in spam, phishing, harassment, or any unlawful activity, or attempt to reverse-engineer or interfere with the App."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 7 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="7. Intellectual Property"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="All rights in Aura belong to me. You receive a limited, personal, non-exclusive licence to use the App for your own private purposes only."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 8 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="8. Disclaimers and Limitation of Liability"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Aura is provided &#8220;as is&#8221; and &#8220;as available&#8221;. I do not guarantee that it will be error-free, accurate, or that every action will execute exactly as intended.\n\nTo the fullest extent permitted by UK law:\n\n\u2022 I am not liable for any financial loss, unwanted purchases, payments, charges, loss of money, loss of data, or any other direct or indirect damages arising from your use of Aura or any actions it performs.\n\u2022 This includes (but is not limited to) situations where Aura misunderstands a command, hallucinates, fails to complete a task correctly, or takes an action you did not intend.\n\u2022 My total liability to you, if any, is limited to &#163;100.\n\nYou agree that you will not hold me liable for any consequences of Aura&#8217;s actions, even if those actions result in significant financial or other harm."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 9 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="9. Termination"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="I may suspend or stop providing Aura at any time. You may stop using and uninstall the App whenever you wish."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 10 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="10. Governing Law"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="These Terms are governed by the laws of England and Wales. Any disputes will be subject to the exclusive jurisdiction of the English courts (or, for consumers in Scotland or Northern Ireland, the courts of your home country as applicable under consumer law)."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 11 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="11. Changes to These Terms"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="I may update these Terms. Continued use after changes means you accept the new Terms."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Contact -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Contact"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Questions? Email me at: curriotthillfarm@gmail.com"
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="32dp" />
+
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

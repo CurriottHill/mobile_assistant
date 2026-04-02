@@ -1,0 +1,230 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.coordinatorlayout.widget.CoordinatorLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/main_privacy"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/assistant_surface">
+
+    <com.google.android.material.appbar.AppBarLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@color/assistant_primary"
+        app:elevation="0dp">
+
+        <com.google.android.material.appbar.MaterialToolbar
+            android:id="@+id/toolbar"
+            android:layout_width="match_parent"
+            android:layout_height="?attr/actionBarSize"
+            android:background="@color/assistant_primary"
+            app:navigationIcon="@drawable/ic_arrow_back"
+            app:titleTextColor="#FFFFFF"
+            app:title="Privacy Policy" />
+
+    </com.google.android.material.appbar.AppBarLayout>
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:layout_behavior="@string/appbar_scrolling_view_behavior">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:padding="24dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Effective Date: 24 March 2026\nLast Updated: 24 March 2026"
+                android:textColor="@color/assistant_hint"
+                android:textSize="13sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="16dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="This Privacy Policy explains how I (the developer of Aura) collect, use, and protect your information when you use the Aura Android app.\n\nMy contact email is curriotthillfarm@gmail.com."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="24dp" />
+
+            <!-- Section 1 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="1. Information I Collect"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="\u2022 API keys you provide\n\u2022 Commands, preferences, or saved conversations (if you choose to save them)\n\u2022 Temporary screen content and screenshots (processed only while Aura is actively helping you &#8212; not stored on my servers unless you explicitly save them)\n\u2022 Accessibility Service data and basic anonymised device/usage information\n\nWhen you use an API key, the chosen LLM provider receives your prompt and any necessary screenshots according to their privacy policy."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 2 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="2. How I Use Your Information"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="To provide Aura&#8217;s features, route requests to your chosen LLM, improve the App (anonymised), and respond to support queries. I do not use your screen content or conversations to train models unless you explicitly opt in."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 3 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="3. Sharing Your Information"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="I do not sell your data. It may be shared only with your chosen LLM provider or service providers under strict confidentiality, or if legally required."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 4 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="4. Data Storage and Security"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Temporary screen data is deleted after processing. API keys are encrypted. Reasonable security measures are used, but no system is 100% secure."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 5 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="5. Your Rights (UK GDPR)"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="You have rights to access, correct, and delete your data. Email curriotthillfarm@gmail.com to exercise them. You can also revoke Accessibility permissions or uninstall Aura at any time."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 6 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="6. Children"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Aura is not for users under 18."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 7 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="7. International Transfers"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Your data may be transferred to other countries (including by the LLM providers you choose)."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Section 8 -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="8. Changes to This Policy"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="I may update this Policy and will notify you of material changes where possible."
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="20dp" />
+
+            <!-- Contact -->
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Contact"
+                android:textColor="@color/assistant_branding"
+                android:textSize="15sp"
+                android:textStyle="bold"
+                android:paddingBottom="6dp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="For privacy questions: curriotthillfarm@gmail.com"
+                android:textColor="@color/assistant_text"
+                android:textSize="14sp"
+                android:lineSpacingMultiplier="1.5"
+                android:paddingBottom="32dp" />
+
+        </LinearLayout>
+    </androidx.core.widget.NestedScrollView>
+
+</androidx.coordinatorlayout.widget.CoordinatorLayout>

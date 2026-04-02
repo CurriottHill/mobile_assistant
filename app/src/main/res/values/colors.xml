@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Core palette (same in both modes) -->
+    <color name="assistant_primary">#E76F51</color>
+    <color name="assistant_secondary">#F4A261</color>
+    <color name="assistant_accent">#2A9D8F</color>
+    <color name="assistant_on_accent">#FFFFFF</color>
+
+    <!-- Text -->
+    <color name="assistant_text">#1C1917</color>
+    <color name="assistant_hint">#6B6560</color>
+    <color name="assistant_transcript">#DD3A3530</color>
+    <color name="assistant_button_text">#5A5550</color>
+    <color name="assistant_status">#786E65</color>
+    <color name="assistant_input_hint">#807870</color>
+    <color name="assistant_branding">#C85A3A</color>
+    <color name="assistant_primary_text">#B8503A</color>
+
+    <!-- Surfaces -->
+    <color name="assistant_surface">#F0EDEA</color>
+    <color name="assistant_surface_dim">#E8E5E0</color>
+    <color name="assistant_keyboard_bg">#14000000</color>
+    <color name="assistant_separator">#1AE76F51</color>
+
+    <!-- Cancel / pill button -->
+    <color name="assistant_cancel_bg">#E8E5E0</color>
+    <color name="assistant_cancel_stroke">#40B0A090</color>
+
+    <!-- Collapse button (alpha-blended) -->
+    <color name="assistant_collapse_bg">#99F0EDEA</color>
+    <color name="assistant_collapse_stroke">#331C1917</color>
+
+    <!-- Card -->
+    <color name="assistant_card_bg">#F0FAF9F7</color>
+    <color name="assistant_card_stroke">#D0D8D4</color>
+
+    <!-- Gradient overlay -->
+    <color name="assistant_gradient_start">#00FAF9F7</color>
+    <color name="assistant_gradient_end">#CCFAF9F7</color>
+
+    <!-- Chat bubbles -->
+    <color name="assistant_user_bubble_text">#1C1917</color>
+    <color name="assistant_user_bubble_bg">#FDEEE9</color>
+    <color name="assistant_bot_bubble_text">#DD3A3530</color>
+    <color name="assistant_bot_bubble_bg">#F0EDEA</color>
+    <color name="assistant_completion_text">#1C1917</color>
+    <color name="assistant_completion_bg">#E0F5F2</color>
+    <color name="assistant_code_text">#1A6E64</color>
+    <color name="assistant_code_bg">#F0EDEA</color>
+    <color name="assistant_prompt_text">#3A3530</color>
+    <color name="assistant_prompt_bg">#F0EDEA</color>
+    <color name="assistant_expand_text">#3A3530</color>
+    <color name="assistant_expand_bg">#E8E5E0</color>
+
+    <!-- Wave visualiser -->
+    <color name="assistant_wave_accent">#E76F51</color>
+    <color name="assistant_wave_dim">#C45A3E</color>
+
+    <!-- FAB bubble -->
+    <color name="assistant_fab_bg">#E76F51</color>
+    <color name="assistant_fab_stroke">#00000000</color>
+    <color name="assistant_fab_dot">#FFFFFF</color>
+</resources>

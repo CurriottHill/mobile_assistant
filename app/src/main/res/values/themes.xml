@@ -1,0 +1,16 @@
+<resources>
+    <style name="Base.Theme.MobileAssistant" parent="Theme.Material3.DayNight.NoActionBar" />
+
+    <style name="Theme.MobileAssistant" parent="Base.Theme.MobileAssistant" />
+
+    <style name="Theme.MobileAssistant.AssistantPopup" parent="Theme.Material3.DayNight.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="windowNoTitle">true</item>
+        <item name="windowActionBar">false</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
