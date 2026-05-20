@@ -29,7 +29,8 @@ internal class SmsToolService(
         if (!hasSmsPermission) {
             return errorResult(
                 "SEND_SMS permission is not granted.", contactName, message,
-                "I need SMS permission before I can send messages."
+                "I need SMS permission first.",
+                needsPermission = Manifest.permission.SEND_SMS
             )
         }
 
@@ -151,7 +152,8 @@ internal class SmsToolService(
         error: String,
         contactName: String,
         message: String,
-        chatResponse: String
+        chatResponse: String,
+        needsPermission: String? = null
     ) = SharedToolExecutionResult(
         toolName = SharedToolSchemas.TOOL_SEND_SMS,
         content = JSONObject()
@@ -159,8 +161,14 @@ internal class SmsToolService(
             .put("tool", SharedToolSchemas.TOOL_SEND_SMS)
             .put("contact_name", contactName)
             .put("message", message)
-            .put("error", error),
-        chatResponse = chatResponse
+            .put("error", error)
+            .also { content ->
+                needsPermission?.let {
+                    content.put("needs_permission", it.substringAfterLast('.'))
+                }
+            },
+        chatResponse = chatResponse,
+        uiAction = needsPermission?.let { PermissionUiActions.appPermission(context, it) }
     )
 
     private data class NameMatchScore(val value: Int, val matchKind: String)

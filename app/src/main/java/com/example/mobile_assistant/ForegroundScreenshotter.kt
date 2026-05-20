@@ -11,7 +11,6 @@ import android.util.Base64
 import android.view.Display
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.io.FileOutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
@@ -23,6 +22,11 @@ internal object ForegroundScreenshotter {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
             return ScreenshotCaptureResult(ok = false, error = "Screenshot capture requires Android 11 or later.")
         }
+
+        // Hard retention invariant: zero historical screenshots on disk. Sweep any
+        // legacy `foreground-*.jpg` files left over from prior sessions (older versions
+        // of this file wrote them to cacheDir and never cleaned up).
+        purgeCachedScreenshots(service)
 
         val target = findForegroundAppTarget(service)
             ?: return ScreenshotCaptureResult(ok = false, error = "Could not resolve a foreground app window.")
@@ -126,14 +130,14 @@ internal object ForegroundScreenshotter {
                 bitmap.compress(Bitmap.CompressFormat.JPEG, 80, out)
                 out.toByteArray()
             }
-            val file = File(service.cacheDir, "foreground-${System.currentTimeMillis()}.jpg")
-            FileOutputStream(file).use { it.write(bytes) }
+            // No on-disk write: the in-memory data URL is the only consumer, and the
+            // single-live-screenshot invariant forbids retaining historical files.
             val base64 = Base64.encodeToString(bytes, Base64.NO_WRAP)
 
             ScreenshotCaptureResult(
                 ok = true,
                 packageName = target.packageName,
-                filePath = file.absolutePath,
+                filePath = null,
                 dataUrl = "data:image/jpeg;base64,$base64",
                 width = bitmap.width,
                 height = bitmap.height,
@@ -236,6 +240,14 @@ internal object ForegroundScreenshotter {
 
     private fun findForegroundAppTarget(service: AssistantAccessibilityService): ForegroundAppTarget? {
         return AssistantUiTargeting.findForegroundAppTarget(service)
+    }
+
+    fun purgeCachedScreenshots(service: AssistantAccessibilityService) {
+        runCatching {
+            service.cacheDir
+                .listFiles { _, name -> name.startsWith("foreground-") && name.endsWith(".jpg") }
+                ?.forEach { it.delete() }
+        }
     }
 
 }

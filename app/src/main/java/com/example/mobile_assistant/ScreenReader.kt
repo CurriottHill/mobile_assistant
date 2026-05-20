@@ -7,6 +7,7 @@ import android.os.SystemClock
 import android.util.Log
 import android.view.accessibility.AccessibilityNodeInfo
 import java.security.MessageDigest
+import java.util.Locale
 import kotlin.math.abs
 
 /**
@@ -86,6 +87,8 @@ object ScreenReader {
     private const val TAP_TYPE_TARGET_ATTEMPTS = 5
     private const val TAP_TYPE_TARGET_DELAY_MS = 120L
     private val NODE_REF_REGEX = Regex("""\[(nf_[a-f0-9]+)]""")
+    // Captures the value inside text="...", desc="...", hint="...", label="..." on a tree line.
+    private val ATTRIBUTE_REGEX = Regex("""(?:text|desc|hint|label)="([^"]*)"""")
 
     private val knownFingerprints = object : LinkedHashMap<String, NodeFingerprint>(256, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, NodeFingerprint>?): Boolean {
@@ -1403,28 +1406,463 @@ object ScreenReader {
         return describeNode(targetNode)
     }
 
-    internal fun tapWhatsAppSendButton(service: AssistantAccessibilityService): Boolean {
+    /** One way to locate a send/save button on a messaging or composer screen. */
+    internal data class SendButtonSelector(
+        val viewId: String? = null,
+        val descEquals: String? = null,
+        val textEquals: String? = null
+    )
+
+    private data class SendButtonCandidate(
+        val node: AccessibilityNodeInfo,
+        val score: Int
+    )
+
+    private val WHATSAPP_SEND_SELECTORS = listOf(
+        SendButtonSelector(viewId = "com.whatsapp:id/send"),
+        SendButtonSelector(viewId = "com.whatsapp:id/send_to_button"),
+        SendButtonSelector(textEquals = "Send"),
+        SendButtonSelector(descEquals = "Send"),
+        SendButtonSelector(textEquals = "Next"),
+        SendButtonSelector(descEquals = "Next")
+    )
+
+    /**
+     * Generic ordered send/save button tap. Tries each [selectors] entry in order: a view id
+     * is matched exactly via the resource id; a desc/text is matched via the accessibility
+     * text search and the first clickable node (or a clickable ancestor) is actioned.
+     */
+    internal fun tapSendButton(
+        service: AssistantAccessibilityService,
+        selectors: List<SendButtonSelector>
+    ): Boolean {
         val root = service.getUnderlyingAppRoot() ?: return false
         return try {
-            val byId = root.findAccessibilityNodeInfosByViewId("com.whatsapp:id/send")
-            if (!byId.isNullOrEmpty()) {
-                val clicked = byId[0].performAction(AccessibilityNodeInfo.ACTION_CLICK)
-                byId.forEach { it.recycle() }
-                if (clicked) return true
+            for (selector in selectors) {
+                if (!selector.viewId.isNullOrBlank()) {
+                    val byId = root.findAccessibilityNodeInfosByViewId(selector.viewId)
+                    if (!byId.isNullOrEmpty()) {
+                        val target = byId.firstOrNull { it.isEnabled } ?: byId[0]
+                        val clicked = clickOrGestureTapNode(
+                            service = service,
+                            node = target,
+                            expectedPackage = root.packageName?.toString()
+                        )
+                        byId.forEach { it.recycle() }
+                        if (clicked) return true
+                    }
+                }
+                val query = selector.textEquals ?: selector.descEquals
+                if (!query.isNullOrBlank()) {
+                    val byText = root.findAccessibilityNodeInfosByText(query)
+                    if (!byText.isNullOrEmpty()) {
+                        val match = byText.firstOrNull { node ->
+                            node.isClickable ||
+                                node.text?.toString()?.equals(query, ignoreCase = true) == true ||
+                                node.contentDescription?.toString()?.equals(query, ignoreCase = true) == true
+                        }
+                        val clicked = match?.let {
+                            clickOrGestureTapNode(
+                                service = service,
+                                node = it,
+                                expectedPackage = root.packageName?.toString()
+                            )
+                        } == true
+                        byText.forEach { it.recycle() }
+                        if (clicked) return true
+                    }
+                }
             }
-            val byDesc = root.findAccessibilityNodeInfosByText("Send")
-            if (!byDesc.isNullOrEmpty()) {
-                val clickable = byDesc.firstOrNull { it.isClickable }
-                val clicked = clickable?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
-                byDesc.forEach { it.recycle() }
-                clicked
-            } else {
+            false
+        } finally {
+            root.recycle()
+        }
+    }
+
+    /**
+     * Gmail-tailored Send tap. Walks the compose tree, collects candidates by viewId,
+     * text, and contentDescription, and picks the best one by position (top-right action
+     * bar) plus label/id. More resilient than the generic selector-based [tapSendButton]
+     * when Gmail's view ids drift between versions or the Send glyph has only a desc.
+     */
+    internal fun tapGmailSendButton(service: AssistantAccessibilityService): Boolean {
+        val root = service.getUnderlyingAppRoot() ?: return false
+        val ownedNodes = mutableListOf<AccessibilityNodeInfo>()
+        return try {
+            val rootBounds = Rect()
+            root.getBoundsInScreen(rootBounds)
+
+            root.findAccessibilityNodeInfosByViewId("com.google.android.gm:id/send")
+                ?.let { ownedNodes += it }
+            root.findAccessibilityNodeInfosByText("Send")
+                ?.let { ownedNodes += it }
+            collectNodesByLabel(root, "send", ownedNodes)
+
+            val best = ownedNodes
+                .asSequence()
+                .filter { it.isVisibleToUser && it.isEnabled }
+                .mapNotNull { node ->
+                    val score = scoreGmailSendCandidate(node, rootBounds)
+                    if (score > Int.MIN_VALUE) SendButtonCandidate(node, score) else null
+                }
+                .maxByOrNull { it.score }
+
+            best?.let { candidate ->
+                clickOrGestureTapNode(
+                    service = service,
+                    node = candidate.node,
+                    expectedPackage = root.packageName?.toString()
+                )
+            } == true
+        } finally {
+            ownedNodes.forEach { it.recycle() }
+            root.recycle()
+        }
+    }
+
+    private fun scoreGmailSendCandidate(node: AccessibilityNodeInfo, rootBounds: Rect): Int {
+        val bounds = bestGestureBoundsForNode(node) ?: return Int.MIN_VALUE
+        val label = resolveSemanticLabel(node)?.lowercase(Locale.US).orEmpty()
+        val viewId = node.viewIdResourceName?.lowercase(Locale.US).orEmpty()
+
+        // Filter look-alikes that are not the compose send action.
+        if ("schedule" in label) return Int.MIN_VALUE
+        if ("feedback" in label) return Int.MIN_VALUE
+        if ("send as" in label) return Int.MIN_VALUE
+
+        var score = 0
+        if (viewId.endsWith(":id/send")) score += 500
+        if (label == "send") score += 400
+        if (node.isClickable) score += 80
+
+        val rootWidth = rootBounds.width().coerceAtLeast(1)
+        val rootHeight = rootBounds.height().coerceAtLeast(1)
+        val centerX = bounds.centerX()
+        val centerY = bounds.centerY()
+        val xRatio = (centerX - rootBounds.left).toFloat() / rootWidth
+        val yRatio = (centerY - rootBounds.top).toFloat() / rootHeight
+
+        // Gmail's Send glyph lives in the top action bar, right side.
+        if (yRatio < 0.20f) score += 250
+        if (yRatio < 0.10f) score += 150
+        if (xRatio > 0.55f) score += 150
+        if (xRatio > 0.72f) score += 200
+
+        // Heavy penalty for anything in the body region.
+        if (yRatio > 0.30f) score -= 400
+        return score
+    }
+
+    private fun collectNodesByLabel(
+        node: AccessibilityNodeInfo,
+        needleLower: String,
+        out: MutableList<AccessibilityNodeInfo>
+    ) {
+        val text = node.text?.toString()?.lowercase(Locale.US)
+        val desc = node.contentDescription?.toString()?.lowercase(Locale.US)
+        if ((text != null && needleLower in text) || (desc != null && needleLower in desc)) {
+            out += AccessibilityNodeInfo.obtain(node)
+        }
+        for (i in 0 until node.childCount) {
+            val child = node.getChild(i) ?: continue
+            collectNodesByLabel(child, needleLower, out)
+            child.recycle()
+        }
+    }
+
+    internal fun tapWhatsAppSendButton(service: AssistantAccessibilityService): Boolean {
+        val root = service.getUnderlyingAppRoot() ?: return false
+        val ownedNodes = mutableListOf<AccessibilityNodeInfo>()
+        return try {
+            val rootBounds = Rect()
+            root.getBoundsInScreen(rootBounds)
+
+            WHATSAPP_SEND_SELECTORS.forEach { selector ->
+                if (!selector.viewId.isNullOrBlank()) {
+                    root.findAccessibilityNodeInfosByViewId(selector.viewId)
+                        ?.let { nodes -> ownedNodes += nodes }
+                }
+
+                val query = selector.textEquals ?: selector.descEquals
+                if (!query.isNullOrBlank()) {
+                    root.findAccessibilityNodeInfosByText(query)
+                        ?.let { nodes -> ownedNodes += nodes }
+                }
+            }
+
+            val best = ownedNodes
+                .asSequence()
+                .filter { it.isVisibleToUser && it.isEnabled }
+                .mapNotNull { node ->
+                    val score = scoreWhatsAppSendCandidate(node, rootBounds)
+                    if (score > Int.MIN_VALUE) SendButtonCandidate(node, score) else null
+                }
+                .maxByOrNull { it.score }
+
+            best?.let { candidate ->
+                clickOrGestureTapNode(
+                    service = service,
+                    node = candidate.node,
+                    expectedPackage = root.packageName?.toString()
+                )
+            } == true
+        } finally {
+            ownedNodes.forEach { it.recycle() }
+            root.recycle()
+        }
+    }
+
+    private fun scoreWhatsAppSendCandidate(node: AccessibilityNodeInfo, rootBounds: Rect): Int {
+        val bounds = bestGestureBoundsForNode(node) ?: return Int.MIN_VALUE
+        val label = resolveSemanticLabel(node)
+            ?.lowercase(Locale.US)
+            .orEmpty()
+        val viewId = node.viewIdResourceName?.lowercase(Locale.US).orEmpty()
+
+        if ("status" in label) return Int.MIN_VALUE
+        if ("my status" in label) return Int.MIN_VALUE
+
+        var score = 0
+        if (viewId.endsWith(":id/send") || viewId.endsWith(":id/send_to_button")) score += 500
+        if (label == "send" || label == "next") score += 400
+        if (node.isClickable) score += 80
+
+        val rootWidth = rootBounds.width().coerceAtLeast(1)
+        val rootHeight = rootBounds.height().coerceAtLeast(1)
+        val centerX = bounds.centerX()
+        val centerY = bounds.centerY()
+        val xRatio = (centerX - rootBounds.left).toFloat() / rootWidth
+        val yRatio = (centerY - rootBounds.top).toFloat() / rootHeight
+
+        if (yRatio > 0.55f) score += 250
+        if (yRatio > 0.75f) score += 250
+        if (xRatio > 0.50f) score += 120
+        if (xRatio > 0.72f) score += 180
+
+        if (bounds.height() > 120 && yRatio < 0.45f) score -= 500
+        return score
+    }
+
+    private fun clickOrClickableAncestor(node: AccessibilityNodeInfo): Boolean {
+        if (node.isClickable && node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return true
+        var current: AccessibilityNodeInfo? = node.parent
+        var hops = 0
+        while (current != null && hops < 6) {
+            val handled = current.isClickable && current.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+            val next = current.parent
+            current.recycle()
+            if (handled) return true
+            current = next
+            hops++
+        }
+        return node.performAction(AccessibilityNodeInfo.ACTION_CLICK)
+    }
+
+    private fun clickOrGestureTapNode(
+        service: AssistantAccessibilityService,
+        node: AccessibilityNodeInfo,
+        expectedPackage: String?
+    ): Boolean {
+        if (clickOrClickableAncestor(node)) return true
+
+        val tapPoints = gestureTapPointsForNode(node)
+        return tapPoints.any { point ->
+            ScreenGestureDispatcher.tapFullScreenPoint(
+                service = service,
+                point = point,
+                expectedPackage = expectedPackage
+            ).tapped
+        }
+    }
+
+    private fun gestureTapPointsForNode(node: AccessibilityNodeInfo): List<ScreenPixelPoint> {
+        val bounds = bestGestureBoundsForNode(node) ?: return emptyList()
+        val centerY = bounds.top + (bounds.height() / 2)
+        val centerX = bounds.left + (bounds.width() / 2)
+        val leftRowX = bounds.left + (bounds.width() * 0.28f).toInt()
+        val rightRowX = bounds.right - (bounds.width() * 0.18f).toInt()
+        return listOf(
+            ScreenPixelPoint(centerX, centerY),
+            ScreenPixelPoint(leftRowX.coerceIn(bounds.left + 1, bounds.right - 1), centerY),
+            ScreenPixelPoint(rightRowX.coerceIn(bounds.left + 1, bounds.right - 1), centerY)
+        ).distinct()
+    }
+
+    private fun bestGestureBoundsForNode(node: AccessibilityNodeInfo): Rect? {
+        val nodeBounds = Rect()
+        node.getBoundsInScreen(nodeBounds)
+        var best = nodeBounds.takeIf { it.width() > 0 && it.height() > 0 }?.let { Rect(it) }
+
+        var current: AccessibilityNodeInfo? = node.parent
+        var hops = 0
+        while (current != null && hops < 6) {
+            val bounds = Rect()
+            current.getBoundsInScreen(bounds)
+            if (bounds.width() > 0 && bounds.height() > 0) {
+                val plausibleRow = bounds.height() in 40..260 &&
+                    (best == null || bounds.width() >= best.width())
+                if (plausibleRow) {
+                    best = Rect(bounds)
+                }
+            }
+            val next = current.parent
+            current.recycle()
+            current = next
+            hops++
+        }
+        return best
+    }
+
+    /**
+     * Scans a formatted tree [dump] for the first element whose visible text/desc/hint/label
+     * contains [query] (case-insensitive) and returns its node_ref, or null if not present.
+     */
+    internal fun findNodeByText(dump: String?, query: String): String? {
+        if (dump.isNullOrBlank()) return null
+        val needle = query.trim().lowercase(Locale.US)
+        if (needle.isBlank()) return null
+        for (line in dump.lineSequence()) {
+            val refMatch = NODE_REF_REGEX.find(line) ?: continue
+            val attributes = ATTRIBUTE_REGEX.findAll(line)
+                .map { it.groupValues[1].lowercase(Locale.US) }
+                .joinToString(" ")
+            if (attributes.contains(needle)) {
+                return normalizeNodeRef(refMatch.groupValues[1])
+            }
+        }
+        return null
+    }
+
+    /** Types [text] into the currently focused editable node, or the first editable node. */
+    internal fun typeInFocusedEditable(
+        service: AssistantAccessibilityService,
+        text: String
+    ): Boolean {
+        val root = service.getUnderlyingAppRoot() ?: return false
+        return try {
+            val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+                ?.takeIf { it.isEditable }
+            val target = focused ?: firstEditableNode(root)
+            if (target == null) {
                 false
+            } else {
+                val args = android.os.Bundle().apply {
+                    putCharSequence(
+                        AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                        text
+                    )
+                }
+                val typed = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                if (target != focused) target.recycle()
+                focused?.recycle()
+                typed
             }
         } finally {
             root.recycle()
         }
     }
+
+    private fun firstEditableNode(root: AccessibilityNodeInfo): AccessibilityNodeInfo? {
+        if (root.isEditable && root.isVisibleToUser) return AccessibilityNodeInfo.obtain(root)
+        for (index in 0 until root.childCount) {
+            val child = root.getChild(index) ?: continue
+            val found = firstEditableNode(child)
+            child.recycle()
+            if (found != null) return found
+        }
+        return null
+    }
+
+    /**
+     * Sets [text] on an editable located by [viewId] (e.g. WhatsApp's picker search field).
+     * Falls back to the focused/first editable via [typeInFocusedEditable] when the view id
+     * is absent or not editable, so version-brittle ids degrade gracefully.
+     */
+    internal fun setTextByViewIdOrFocused(
+        service: AssistantAccessibilityService,
+        viewId: String?,
+        text: String
+    ): Boolean {
+        if (!viewId.isNullOrBlank()) {
+            val root = service.getUnderlyingAppRoot()
+            if (root != null) {
+                try {
+                    val byId = root.findAccessibilityNodeInfosByViewId(viewId)
+                    val target = byId?.firstOrNull { it.isEditable } ?: byId?.firstOrNull()
+                    if (target != null) {
+                        target.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
+                        val args = android.os.Bundle().apply {
+                            putCharSequence(
+                                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                                text
+                            )
+                        }
+                        val typed = target.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                        byId.forEach { it.recycle() }
+                        if (typed) return true
+                    } else {
+                        byId?.forEach { it.recycle() }
+                    }
+                } finally {
+                    root.recycle()
+                }
+            }
+        }
+        return typeInFocusedEditable(service, text)
+    }
+
+    /**
+     * Taps a chat/contact row whose visible text equals [name] (case-insensitive), climbing
+     * to the clickable row. Falls back to the first contact/chat row by well-known WhatsApp
+     * view ids, then to the first clickable node containing [name].
+     */
+    internal fun tapChatRowByName(
+        service: AssistantAccessibilityService,
+        name: String
+    ): Boolean {
+        val root = service.getUnderlyingAppRoot() ?: return false
+        val needle = name.trim()
+        return try {
+            if (needle.isNotBlank()) {
+                val byText = root.findAccessibilityNodeInfosByText(needle)
+                if (!byText.isNullOrEmpty()) {
+                    val exact = byText.firstOrNull { node ->
+                        node.text?.toString()?.trim()?.equals(needle, ignoreCase = true) == true ||
+                            node.contentDescription?.toString()?.trim()?.equals(needle, ignoreCase = true) == true
+                    }
+                    val target = exact ?: byText.first()
+                    val clicked = clickOrGestureTapNode(
+                        service = service,
+                        node = target,
+                        expectedPackage = root.packageName?.toString()
+                    )
+                    byText.forEach { it.recycle() }
+                    if (clicked) return true
+                }
+            }
+            for (rowId in CHAT_ROW_VIEW_IDS) {
+                val rows = root.findAccessibilityNodeInfosByViewId(rowId)
+                if (!rows.isNullOrEmpty()) {
+                    val clicked = clickOrGestureTapNode(
+                        service = service,
+                        node = rows.first(),
+                        expectedPackage = root.packageName?.toString()
+                    )
+                    rows.forEach { it.recycle() }
+                    if (clicked) return true
+                }
+            }
+            false
+        } finally {
+            root.recycle()
+        }
+    }
+
+    private val CHAT_ROW_VIEW_IDS = listOf(
+        "com.whatsapp:id/contactpicker_row_name",
+        "com.whatsapp:id/conversations_row_contact_name",
+        "com.whatsapp:id/contact_row_container"
+    )
 
     private fun belongsToTargetApp(node: AccessibilityNodeInfo, targetPackage: String?): Boolean {
         val nodePackage = node.packageName?.toString()

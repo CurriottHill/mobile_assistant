@@ -1,0 +1,50 @@
+[
+  {
+    "run_id": "run_1779035849784",
+    "task_id": "directions_paris_via_london_stt_noise",
+    "agent_model": "claude-haiku-4-5-20251001",
+    "timestamp_iso": "2026-05-17T16:37:29Z",
+    "step_count": 1,
+    "quality_score": null,
+    "user_stopped": true,
+    "user_intervened": false,
+    "completed": null,
+    "recovery_rate": null
+  },
+  {
+    "run_id": "run_1779035858901",
+    "task_id": "directions_paris_via_london_stt_noise",
+    "agent_model": "claude-haiku-4-5-20251001",
+    "timestamp_iso": "2026-05-17T16:37:38Z",
+    "step_count": 14,
+    "quality_score": null,
+    "user_stopped": false,
+    "user_intervened": false,
+    "completed": null,
+    "recovery_rate": null
+  },
+  {
+    "run_id": "run_1779036831124",
+    "task_id": "directions_paris_via_london_stt_noise",
+    "agent_model": "claude-haiku-4-5-20251001",
+    "timestamp_iso": "2026-05-17T16:53:51Z",
+    "step_count": 3,
+    "quality_score": 0,
+    "user_stopped": false,
+    "user_intervened": false,
+    "completed": true,
+    "recovery_rate": 1
+  },
+  {
+    "run_id": "run_1779037841483",
+    "task_id": "directions_paris_via_london_stt_noise",
+    "agent_model": "claude-haiku-4-5-20251001",
+    "timestamp_iso": "2026-05-17T17:10:41Z",
+    "step_count": 7,
+    "quality_score": 7.5,
+    "user_stopped": false,
+    "user_intervened": false,
+    "completed": true,
+    "recovery_rate": 0
+  }
+]

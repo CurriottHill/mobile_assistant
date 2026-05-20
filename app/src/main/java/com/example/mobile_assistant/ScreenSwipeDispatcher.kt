@@ -70,6 +70,28 @@ internal object ScreenSwipeDispatcher {
         }
     }
 
+    fun swipeFullScreenPath(
+        service: AssistantAccessibilityService,
+        swipePath: SwipePath,
+        direction: SwipeDirection,
+        packageName: String? = null,
+        durationMs: Long = DEFAULT_SWIPE_DURATION_MS
+    ): SwipeResult {
+        val snapshot = service.detachAssistantVisualsForGesture()
+        try {
+            SystemClock.sleep(GESTURE_SETTLE_DELAY_MS)
+            return dispatchSwipeGesture(
+                service = service,
+                swipePath = swipePath,
+                direction = direction,
+                durationMs = durationMs,
+                packageName = packageName
+            )
+        } finally {
+            service.restoreAssistantVisualsAfterCapture(snapshot)
+        }
+    }
+
     private fun dispatchSwipeGesture(
         service: AssistantAccessibilityService,
         swipePath: SwipePath,

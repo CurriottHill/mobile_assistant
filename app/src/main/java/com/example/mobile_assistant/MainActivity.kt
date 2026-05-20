@@ -1,21 +1,10 @@
 package com.example.mobile_assistant
 
-import android.content.ComponentName
 import android.content.Intent
 import android.os.Bundle
-import android.provider.Settings
-import android.text.SpannableString
-import android.text.Spanned
-import android.text.method.LinkMovementMethod
-import android.text.style.ClickableSpan
 import android.view.View
-import android.widget.Button
-import android.widget.EditText
-import android.widget.LinearLayout
 import android.widget.TextView
-import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -28,16 +17,23 @@ import kotlinx.coroutines.launch
 class MainActivity : AppCompatActivity() {
     private val activityScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val spotifyService by lazy { SpotifyService(applicationContext) }
+    private val googleAccountService by lazy { GoogleAccountService(applicationContext) }
+    private val prefs by lazy { getSharedPreferences("aura_prefs", MODE_PRIVATE) }
 
-    private lateinit var btnSpotifyLogin: Button
-    private lateinit var textSpotifyStatus: TextView
-    private lateinit var layoutApiKey: LinearLayout
-    private lateinit var editApiKey: EditText
-    private lateinit var textInstructions: TextView
+    private lateinit var textReadyStatus: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+
+        val isSpotifyRedirect = spotifyService.isSpotifyRedirect(intent?.data)
+        val onboardingDone = prefs.getBoolean("onboarding_complete", false)
+        if (!onboardingDone && !isSpotifyRedirect) {
+            startActivity(Intent(this, OnboardingActivity::class.java))
+            finish()
+            return
+        }
+
         setContentView(R.layout.activity_main)
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { view, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
@@ -45,11 +41,9 @@ class MainActivity : AppCompatActivity() {
             insets
         }
 
-        showConsentDialogIfNeeded()
-        bindViews()
-        bindClickListeners()
-        refreshApiKeySection()
-        refreshSpotifyStatus()
+        textReadyStatus = findViewById(R.id.textReadyStatus)
+        bindStaticClickListeners()
+        refreshDashboard()
         maybeHandleSpotifyRedirect(intent)
     }
 
@@ -59,84 +53,94 @@ class MainActivity : AppCompatActivity() {
         maybeHandleSpotifyRedirect(intent)
     }
 
+    override fun onResume() {
+        super.onResume()
+        refreshDashboard()
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         activityScope.cancel()
     }
 
-    private fun bindViews() {
-        btnSpotifyLogin = findViewById(R.id.btnSpotifyLogin)
-        textSpotifyStatus = findViewById(R.id.textSpotifyStatus)
-        layoutApiKey = findViewById(R.id.layoutApiKey)
-        editApiKey = findViewById(R.id.editApiKey)
-        textInstructions = findViewById(R.id.textInstructions)
-    }
-
-    private fun refreshApiKeySection() {
-        if (ApiKeyStore.hasAnthropicKey(this)) {
-            layoutApiKey.visibility = View.GONE
-            textInstructions.visibility = View.VISIBLE
-        } else {
-            layoutApiKey.visibility = View.VISIBLE
-            textInstructions.visibility = View.GONE
+    private fun bindStaticClickListeners() {
+        findViewById<View>(R.id.btnOpenAssistant).setOnClickListener {
+            startActivity(Intent(this, AssistantActivity::class.java))
         }
-    }
-
-    private fun bindClickListeners() {
-        findViewById<Button>(R.id.btnSaveApiKey).setOnClickListener {
-            val key = editApiKey.text.toString().trim()
-            if (key.isBlank() || !key.startsWith("sk-ant-")) {
-                showToast(getString(R.string.api_key_invalid))
-                return@setOnClickListener
-            }
-            ApiKeyStore.setAnthropicKey(this, key)
-            editApiKey.setText("")
-            refreshApiKeySection()
-            showToast(getString(R.string.api_key_saved))
-        }
-
-        findViewById<Button>(R.id.btnAccessibility).setOnClickListener {
-            val accessibilityIntent = Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)
-            val componentName = ComponentName(packageName, AssistantAccessibilityService::class.java.name)
-            accessibilityIntent.putExtra(":settings:fragment_args_key", componentName.flattenToString())
-            accessibilityIntent.putExtra("page_fragment_args_key", componentName.flattenToString())
-            startActivity(accessibilityIntent)
-        }
-
         findViewById<TextView>(R.id.btnTerms).setOnClickListener {
             startActivity(Intent(this, TermsActivity::class.java))
         }
-
         findViewById<TextView>(R.id.btnPrivacy).setOnClickListener {
             startActivity(Intent(this, PrivacyPolicyActivity::class.java))
         }
-
-        btnSpotifyLogin.setOnClickListener {
-            val launchResult = spotifyService.createLoginIntent()
-            if (!launchResult.ok || launchResult.intent == null) {
-                refreshSpotifyStatus()
-                showToast(launchResult.message)
-                return@setOnClickListener
-            }
-
-            if (launchResult.intent.resolveActivity(packageManager) == null) {
-                showToast(getString(R.string.spotify_no_browser_found))
-                return@setOnClickListener
-            }
-
-            startActivity(launchResult.intent)
+        findViewById<TextView>(R.id.btnEval).setOnClickListener {
+            startActivity(Intent(this, EvalActivity::class.java))
         }
     }
 
-    private fun refreshSpotifyStatus() {
-        val status = spotifyService.connectionStatus()
-        textSpotifyStatus.text = status.statusText
-        btnSpotifyLogin.text = if (status.isConnected) {
-            getString(R.string.spotify_reconnect)
+    private fun refreshDashboard() {
+        val accessibilityOk = SetupChecks.isAccessibilityEnabled(this)
+        val assistantOk = SetupChecks.isDefaultAssistantApp(this)
+        val permissionsOk = SetupChecks.missingRuntimePermissionLabels(this).isEmpty()
+        val locationOk = SetupChecks.isLocationReady(this)
+        val spotifyStatus = spotifyService.connectionStatus()
+        val googleStatus = googleAccountService.connectionStatus()
+
+        bindRow(
+            R.id.rowAccessibility,
+            getString(R.string.row_accessibility_title),
+            accessibilityOk,
+            AccessibilitySettingsActivity::class.java
+        )
+        bindRow(
+            R.id.rowDefaultAssistant,
+            getString(R.string.row_default_assistant_title),
+            assistantOk,
+            DefaultAssistantSettingsActivity::class.java
+        )
+        bindRow(
+            R.id.rowPermissions,
+            getString(R.string.row_permissions_title),
+            permissionsOk,
+            PermissionsSettingsActivity::class.java
+        )
+        bindRow(
+            R.id.rowLocation,
+            getString(R.string.row_location_title),
+            locationOk,
+            LocationSettingsActivity::class.java
+        )
+        bindRow(
+            R.id.rowSpotify,
+            getString(R.string.row_spotify_title),
+            spotifyStatus.isConnected && spotifyStatus.hasPlaylistModify,
+            SpotifySettingsActivity::class.java
+        )
+        bindRow(
+            R.id.rowGoogle,
+            getString(R.string.row_google_title),
+            googleStatus.isConnected,
+            GoogleSettingsActivity::class.java
+        )
+
+        val attention = listOf(accessibilityOk, assistantOk, permissionsOk, locationOk).count { !it }
+        textReadyStatus.text = if (attention == 0) {
+            getString(R.string.dashboard_summary_all_set)
         } else {
-            getString(R.string.spotify_connect)
+            getString(R.string.dashboard_summary_attention, attention)
         }
-        btnSpotifyLogin.isEnabled = status.isConfigured
+    }
+
+    private fun bindRow(rowId: Int, title: String, ok: Boolean, target: Class<*>) {
+        val row = findViewById<View>(rowId)
+        row.findViewById<TextView>(R.id.rowTitle).text = title
+        row.findViewById<TextView>(R.id.rowStatus).text = getString(
+            if (ok) R.string.status_ok else R.string.status_action_needed
+        )
+        row.findViewById<View>(R.id.rowDot).setBackgroundResource(
+            if (ok) R.drawable.bg_status_dot_ok else R.drawable.bg_status_dot_attention
+        )
+        row.setOnClickListener { startActivity(Intent(this, target)) }
     }
 
     private fun maybeHandleSpotifyRedirect(intent: Intent?) {
@@ -147,8 +151,12 @@ class MainActivity : AppCompatActivity() {
         activityScope.launch {
             val result = spotifyService.handleRedirect(redirectUri)
             if (result.handled) {
-                refreshSpotifyStatus()
-                showToast(result.message)
+                refreshDashboard()
+                android.widget.Toast.makeText(
+                    this@MainActivity,
+                    result.message,
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
             }
         }
     }
@@ -157,51 +165,4 @@ class MainActivity : AppCompatActivity() {
         setIntent(Intent(intent).apply { data = null })
     }
 
-    private fun showConsentDialogIfNeeded() {
-        val prefs = getSharedPreferences("aura_prefs", MODE_PRIVATE)
-        if (prefs.getBoolean("consent_accepted", false)) return
-
-        val raw = "By using Aura you agree to our Terms & Conditions and Privacy Policy."
-        val spannable = SpannableString(raw)
-
-        val termsStart = raw.indexOf("Terms & Conditions")
-        val termsEnd = termsStart + "Terms & Conditions".length
-        spannable.setSpan(object : ClickableSpan() {
-            override fun onClick(widget: View) {
-                startActivity(Intent(this@MainActivity, TermsActivity::class.java))
-            }
-        }, termsStart, termsEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-
-        val privacyStart = raw.indexOf("Privacy Policy")
-        val privacyEnd = privacyStart + "Privacy Policy".length
-        spannable.setSpan(object : ClickableSpan() {
-            override fun onClick(widget: View) {
-                startActivity(Intent(this@MainActivity, PrivacyPolicyActivity::class.java))
-            }
-        }, privacyStart, privacyEnd, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-
-        val messageView = TextView(this).apply {
-            text = spannable
-            movementMethod = LinkMovementMethod.getInstance()
-            setPadding(64, 32, 64, 16)
-            textSize = 15f
-            setLineSpacing(0f, 1.4f)
-        }
-
-        AlertDialog.Builder(this)
-            .setTitle("Terms & Privacy")
-            .setView(messageView)
-            .setPositiveButton("Accept") { _, _ ->
-                prefs.edit().putBoolean("consent_accepted", true).apply()
-            }
-            .setNegativeButton("Decline") { _, _ ->
-                finish()
-            }
-            .setCancelable(false)
-            .show()
-    }
-
-    private fun showToast(message: String) {
-        Toast.makeText(this, message, Toast.LENGTH_LONG).show()
-    }
 }

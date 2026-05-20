@@ -25,15 +25,14 @@ An Android AI assistant that runs as a floating overlay and can control your pho
 The assistant runs as an Android Accessibility Service, which lets it draw an overlay on top of other apps without stealing focus. This means it can read the active app's UI tree and interact with it while you're using any other app.
 
 There are two AI layers:
-1. **Chat** — handles questions and general requests (Claude Haiku)
+1. **Chat** — handles questions and general requests (ChatGPT via OpenAI)
 2. **Agent** — activated when a phone action is needed; plans and executes multi-step tasks using screen observation + tool calls
 
 ## Setup
 
 ### Prerequisites
 - Android 7.0+ (API 24)
-- [Anthropic API key](https://console.anthropic.com/) (Claude)
-- [OpenAI API key](https://platform.openai.com/) (Whisper transcription)
+- [OpenAI API key](https://platform.openai.com/) (ChatGPT and Whisper transcription)
 - [Cartesia API key](https://cartesia.ai/) (TTS)
 - [Spotify app](https://developer.spotify.com/dashboard) credentials (optional)
 
@@ -50,14 +49,14 @@ SPOTIFY_CLIENT_ID=your_spotify_client_id
 SPOTIFY_REDIRECT_URI=mobile_assistant://spotify-auth-callback
 ```
 
-The Anthropic key is entered at runtime in the app (not stored in `local.properties`).
+Anthropic support remains in the codebase, but the default app path uses OpenAI and reads `OPENAI_API_KEY` from `local.properties`.
 
 ### Runtime Setup
 
 1. Install and launch the app
 2. Accept Terms & Privacy
 3. Tap **Open Accessibility Settings** and enable **Mobile Assistant**
-4. Return to the app and enter your Anthropic API key
+4. Return to the app after adding `OPENAI_API_KEY` to `local.properties`
 5. Optionally connect Spotify
 
 Hold the power button (or set the app as your default assistant) to open the overlay.

@@ -73,6 +73,9 @@ class AssistantAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         instance = this
+        // Sweep any legacy screenshot files from prior sessions so no historical
+        // screenshots survive on disk (in case the user never triggers a fresh capture).
+        ForegroundScreenshotter.purgeCachedScreenshots(this)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -160,6 +163,15 @@ class AssistantAccessibilityService : AccessibilityService() {
 
     fun getUnderlyingAppRoot(): AccessibilityNodeInfo? {
         return rootInActiveWindow
+    }
+
+    /** Eval harness: show the overlay (creating the AgentManager) and inject a prompt
+     *  as if the user typed it. Returns false if the overlay could not be created. */
+    fun injectAgentPrompt(text: String): Boolean {
+        showOverlay()
+        val controller = overlayController ?: return false
+        controller.submitEvalPrompt(text)
+        return true
     }
 
     internal fun currentUiSignal(): UiSignal {
@@ -327,6 +339,8 @@ class AssistantAccessibilityService : AccessibilityService() {
         val controller = overlayController
         if (controller != null) {
             controller.rootView.visibility = View.VISIBLE
+            // The collapse exit animation left the surface faded/offset — replay the entrance.
+            controller.replayEntrance()
         } else {
             showOverlay()
         }
@@ -406,8 +420,8 @@ class AssistantAccessibilityService : AccessibilityService() {
         bubble.animate()
             .scaleX(1f)
             .scaleY(1f)
-            .setDuration(300)
-            .setInterpolator(OvershootInterpolator(1.5f))
+            .setDuration(340)
+            .setInterpolator(android.view.animation.DecelerateInterpolator(1.4f))
             .withEndAction { startBubblePulse(bubble) }
             .start()
 
@@ -634,8 +648,8 @@ class AssistantAccessibilityService : AccessibilityService() {
 
     private fun startBubblePulse(bubble: View) {
         stopBubblePulse()
-        bubblePulseAnimator = ValueAnimator.ofFloat(1f, 1.08f, 1f).apply {
-            duration = 1400
+        bubblePulseAnimator = ValueAnimator.ofFloat(1f, 1.04f, 1f).apply {
+            duration = 1600
             repeatCount = ValueAnimator.INFINITE
             interpolator = android.view.animation.AccelerateDecelerateInterpolator()
             addUpdateListener { anim ->

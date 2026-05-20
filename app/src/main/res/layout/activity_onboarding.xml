@@ -1,0 +1,450 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/main_onboarding"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bg_home_canvas"
+    android:fillViewport="true"
+    android:scrollbars="none"
+    tools:context=".OnboardingActivity">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="24dp"
+        android:paddingTop="32dp"
+        android:paddingEnd="24dp"
+        android:paddingBottom="32dp">
+
+        <ImageView
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@drawable/bg_logo_mark"
+            android:contentDescription="@string/aura_logo_description"
+            android:padding="9dp"
+            android:scaleType="fitCenter"
+            android:src="@drawable/ic_aura_logo" />
+
+        <TextView
+            android:id="@+id/textOnboardingStepLabel"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:letterSpacing="0.08"
+            android:text="@string/onboarding_step_label"
+            android:textAllCaps="true"
+            android:textColor="@color/home_section_meta"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+
+        <ProgressBar
+            android:id="@+id/onboardingProgress"
+            style="@android:style/Widget.ProgressBar.Horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="6dp"
+            android:layout_marginTop="10dp"
+            android:indeterminate="false"
+            android:max="100"
+            android:progress="20"
+            android:progressDrawable="@drawable/progress_setup" />
+
+        <ViewFlipper
+            android:id="@+id/onboardingFlipper"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp">
+
+            <!-- Step 0: Welcome + consent -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_home_panel"
+                android:orientation="vertical"
+                android:padding="24dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/onboarding_welcome_title"
+                    android:textColor="@color/home_panel_title"
+                    android:textSize="28sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:lineSpacingExtra="5dp"
+                    android:text="@string/onboarding_welcome_body"
+                    android:textColor="@color/home_panel_body"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:id="@+id/textOnboardingConsent"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="20dp"
+                    android:background="@drawable/bg_home_info"
+                    android:lineSpacingExtra="4dp"
+                    android:padding="14dp"
+                    android:text="@string/onboarding_consent_text"
+                    android:textColor="@color/home_info_text"
+                    android:textSize="14sp" />
+
+                <Button
+                    android:id="@+id/btnConsentAccept"
+                    style="@style/Widget.Material3.Button"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="22dp"
+                    android:backgroundTint="@color/home_button_primary"
+                    android:text="@string/onboarding_accept_continue"
+                    android:textColor="@color/home_button_primary_text" />
+
+                <Button
+                    android:id="@+id/btnConsentDecline"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="6dp"
+                    android:text="@string/onboarding_decline"
+                    android:textColor="@color/home_footer_text" />
+
+            </LinearLayout>
+
+            <!-- Step 1: Accessibility -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_home_panel"
+                android:orientation="vertical"
+                android:padding="24dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/onboarding_accessibility_title"
+                    android:textColor="@color/home_panel_title"
+                    android:textSize="26sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:lineSpacingExtra="5dp"
+                    android:text="@string/setup_accessibility_body"
+                    android:textColor="@color/home_panel_body"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:id="@+id/textOnboardingAccessibilityStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:background="@drawable/bg_home_info"
+                    android:padding="13dp"
+                    android:text="@string/accessibility_status_missing"
+                    android:textColor="@color/home_info_text"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btnOnboardingAccessibilityAction"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="18dp"
+                    android:text="@string/open_accessibility_settings"
+                    android:textColor="@color/home_button_secondary_text"
+                    app:strokeColor="@color/home_button_secondary_stroke" />
+
+                <Button
+                    android:id="@+id/btnOnboardingAccessibilityContinue"
+                    style="@style/Widget.Material3.Button"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="10dp"
+                    android:backgroundTint="@color/home_button_primary"
+                    android:text="@string/onboarding_continue"
+                    android:textColor="@color/home_button_primary_text" />
+
+                <Button
+                    android:id="@+id/btnOnboardingAccessibilitySkip"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/onboarding_skip"
+                    android:textColor="@color/home_footer_text" />
+
+            </LinearLayout>
+
+            <!-- Step 2: Default assistant -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_home_panel"
+                android:orientation="vertical"
+                android:padding="24dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/onboarding_default_assistant_title"
+                    android:textColor="@color/home_panel_title"
+                    android:textSize="26sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:lineSpacingExtra="5dp"
+                    android:text="@string/setup_default_assistant_body"
+                    android:textColor="@color/home_panel_body"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:id="@+id/textOnboardingAssistantStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:background="@drawable/bg_home_info"
+                    android:padding="13dp"
+                    android:text="@string/default_assistant_status_missing"
+                    android:textColor="@color/home_info_text"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btnOnboardingAssistantAction"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="18dp"
+                    android:text="@string/default_assistant_button"
+                    android:textColor="@color/home_button_secondary_text"
+                    app:strokeColor="@color/home_button_secondary_stroke" />
+
+                <Button
+                    android:id="@+id/btnOnboardingAssistantContinue"
+                    style="@style/Widget.Material3.Button"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="10dp"
+                    android:backgroundTint="@color/home_button_primary"
+                    android:text="@string/onboarding_continue"
+                    android:textColor="@color/home_button_primary_text" />
+
+                <Button
+                    android:id="@+id/btnOnboardingAssistantSkip"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/onboarding_skip"
+                    android:textColor="@color/home_footer_text" />
+
+            </LinearLayout>
+
+            <!-- Step 3: Permissions -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_home_panel"
+                android:orientation="vertical"
+                android:padding="24dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/onboarding_permissions_title"
+                    android:textColor="@color/home_panel_title"
+                    android:textSize="26sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:lineSpacingExtra="5dp"
+                    android:text="@string/setup_permissions_body"
+                    android:textColor="@color/home_panel_body"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:id="@+id/textOnboardingPermissionsStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:background="@drawable/bg_home_info"
+                    android:padding="13dp"
+                    android:text="@string/permissions_status_pending"
+                    android:textColor="@color/home_info_text"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btnOnboardingPermissionsAction"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="18dp"
+                    android:text="@string/permissions_button"
+                    android:textColor="@color/home_button_secondary_text"
+                    app:strokeColor="@color/home_button_secondary_stroke" />
+
+                <Button
+                    android:id="@+id/btnOnboardingPermissionsAppSettings"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="2dp"
+                    android:text="@string/permissions_open_app_settings"
+                    android:textColor="@color/home_button_secondary_text" />
+
+                <Button
+                    android:id="@+id/btnOnboardingPermissionsContinue"
+                    style="@style/Widget.Material3.Button"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="10dp"
+                    android:backgroundTint="@color/home_button_primary"
+                    android:text="@string/onboarding_continue"
+                    android:textColor="@color/home_button_primary_text" />
+
+                <Button
+                    android:id="@+id/btnOnboardingPermissionsSkip"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/onboarding_skip"
+                    android:textColor="@color/home_footer_text" />
+
+            </LinearLayout>
+
+            <!-- Step 4: Done -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_home_panel"
+                android:orientation="vertical"
+                android:padding="24dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/onboarding_location_title"
+                    android:textColor="@color/home_panel_title"
+                    android:textSize="26sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:lineSpacingExtra="5dp"
+                    android:text="@string/setup_location_body"
+                    android:textColor="@color/home_panel_body"
+                    android:textSize="15sp" />
+
+                <TextView
+                    android:id="@+id/textOnboardingLocationStatus"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="18dp"
+                    android:background="@drawable/bg_home_info"
+                    android:padding="13dp"
+                    android:text="@string/location_status_missing_both"
+                    android:textColor="@color/home_info_text"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btnOnboardingLocationPermissionAction"
+                    style="@style/Widget.Material3.Button"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="18dp"
+                    android:backgroundTint="@color/home_button_primary"
+                    android:text="@string/location_permission_button"
+                    android:textColor="@color/home_button_primary_text" />
+
+                <Button
+                    android:id="@+id/btnOnboardingLocationPreferencesAction"
+                    style="@style/Widget.Material3.Button.OutlinedButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="10dp"
+                    android:text="@string/location_preferences_button"
+                    android:textColor="@color/home_button_secondary_text"
+                    app:strokeColor="@color/home_button_secondary_stroke" />
+
+                <Button
+                    android:id="@+id/btnOnboardingLocationContinue"
+                    style="@style/Widget.Material3.Button"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="10dp"
+                    android:backgroundTint="@color/home_button_primary"
+                    android:text="@string/onboarding_continue"
+                    android:textColor="@color/home_button_primary_text" />
+
+                <Button
+                    android:id="@+id/btnOnboardingLocationSkip"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_marginTop="4dp"
+                    android:text="@string/onboarding_skip"
+                    android:textColor="@color/home_footer_text" />
+
+            </LinearLayout>
+
+            <!-- Step 5: Done -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_home_panel"
+                android:orientation="vertical"
+                android:padding="24dp">
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="@string/onboarding_done_title"
+                    android:textColor="@color/home_panel_title"
+                    android:textSize="28sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="12dp"
+                    android:lineSpacingExtra="5dp"
+                    android:text="@string/onboarding_done_body"
+                    android:textColor="@color/home_panel_body"
+                    android:textSize="15sp" />
+
+                <Button
+                    android:id="@+id/btnOnboardingFinish"
+                    style="@style/Widget.Material3.Button"
+                    android:layout_width="match_parent"
+                    android:layout_height="52dp"
+                    android:layout_marginTop="24dp"
+                    android:backgroundTint="@color/home_button_primary"
+                    android:text="@string/onboarding_finish"
+                    android:textColor="@color/home_button_primary_text" />
+
+            </LinearLayout>
+
+        </ViewFlipper>
+
+    </LinearLayout>
+
+</ScrollView>

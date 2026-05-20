@@ -1,19 +1,17 @@
 package com.example.mobile_assistant
 
-import android.Manifest
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.provider.ContactsContract
-import androidx.core.content.ContextCompat
 import kotlinx.coroutines.delay
 import org.json.JSONObject
-import java.util.Locale
 
 internal class WhatsAppToolService(
     private val context: Context,
-    private val tapSendButton: suspend () -> Boolean
+    private val tapSendButton: suspend () -> Boolean,
+    private val openWhatsAppShare: (String) -> Boolean,
+    private val typeInPickerSearch: suspend (String) -> Boolean,
+    private val tapChatRow: suspend (String) -> Boolean
 ) {
     suspend fun executeSend(arguments: JSONObject): SharedToolExecutionResult {
         val contactName = arguments.optString("contact_name").trim()
@@ -37,13 +35,14 @@ internal class WhatsAppToolService(
             )
         }
 
-        val resolved = resolveBestPhoneNumber(contactName)
-            ?: return errorResult(
-                "No matching contact or phone number found.", contactName, message,
-                "I could not find a phone number for $contactName."
-            )
+        val resolved = ContactResolver.resolveBestPhoneNumber(context, contactName)
+        if (WhatsAppSendSupport.choosePath(resolved) == WhatsAppSendSupport.Path.SHARE_PICKER) {
+            return sendViaSharePicker(contactName, message)
+        }
+        // resolved is non-null on the PHONE path.
+        val match = resolved!!
 
-        val phone = resolved.phoneNumber.filter { it.isDigit() || it == '+' }
+        val phone = match.phoneNumber.filter { it.isDigit() || it == '+' }
         val encodedMessage = Uri.encode(message)
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://wa.me/$phone?text=$encodedMessage")).apply {
             setPackage("com.whatsapp")
@@ -52,32 +51,25 @@ internal class WhatsAppToolService(
 
         return runCatching {
             context.startActivity(intent)
-            delay(2000)
-            val sent = tapSendButton()
+            val sent = pollTapSendButton()
             if (sent) {
-                SharedToolExecutionResult(
-                    toolName = SharedToolSchemas.TOOL_SEND_WHATSAPP,
-                    content = JSONObject()
-                        .put("ok", true)
-                        .put("tool", SharedToolSchemas.TOOL_SEND_WHATSAPP)
-                        .put("contact_name", contactName)
-                        .put("resolved_name", resolved.displayName)
-                        .put("phone_number", resolved.phoneNumber)
-                        .put("match_kind", resolved.matchKind),
-                    chatResponse = "WhatsApp message sent to ${resolved.displayName}."
-                )
+                successResult(
+                    spoken = "WhatsApp message sent to ${match.displayName}.",
+                    matchKind = match.matchKind
+                ) { c ->
+                    c.put("contact_name", contactName)
+                        .put("resolved_name", match.displayName)
+                        .put("phone_number", match.phoneNumber)
+                }
             } else {
-                SharedToolExecutionResult(
-                    toolName = SharedToolSchemas.TOOL_SEND_WHATSAPP,
-                    content = JSONObject()
-                        .put("ok", false)
-                        .put("tool", SharedToolSchemas.TOOL_SEND_WHATSAPP)
-                        .put("contact_name", contactName)
-                        .put("resolved_name", resolved.displayName)
-                        .put("phone_number", resolved.phoneNumber)
-                        .put("error", "WhatsApp opened but could not tap the send button automatically."),
-                    chatResponse = "I opened WhatsApp for ${resolved.displayName} but couldn't tap send automatically. Please tap send."
-                )
+                notSentResult(
+                    spoken = "I opened WhatsApp for ${match.displayName} but couldn't send automatically.",
+                    error = "WhatsApp opened but could not tap the send button automatically."
+                ) { c ->
+                    c.put("contact_name", contactName)
+                        .put("resolved_name", match.displayName)
+                        .put("phone_number", match.phoneNumber)
+                }
             }
         }.getOrElse { error ->
             errorResult(
@@ -87,81 +79,95 @@ internal class WhatsAppToolService(
         }
     }
 
-    private fun resolveBestPhoneNumber(input: String): ContactPhoneMatch? {
-        val trimmed = input.trim()
-        if (trimmed.isBlank()) return null
+    /**
+     * Hands-free path for groups / chats not in contacts. The message is pre-filled by the
+     * ACTION_SEND intent (never typed), then the chat is auto-searched, selected, and sent
+     * via accessibility. No step ever asks the user to touch the phone.
+     */
+    private suspend fun sendViaSharePicker(
+        rawName: String,
+        message: String
+    ): SharedToolExecutionResult {
+        val query = WhatsAppSendSupport.normalizeChatQuery(rawName)
 
-        sanitizePhoneNumber(trimmed)?.let { number ->
-            return ContactPhoneMatch(displayName = trimmed, phoneNumber = number, matchKind = "direct_number")
+        val opened = runCatching { openWhatsAppShare(message) }.getOrDefault(false)
+        if (!opened) {
+            return notSentResult(
+                spoken = "I could not open WhatsApp to send that message.",
+                error = "Failed to open the WhatsApp share picker."
+            ) { c -> c.put("contact_name", rawName).put("target", query) }
         }
 
-        val normalizedQuery = normalizeName(trimmed)
-        if (normalizedQuery.isBlank()) return null
+        // Give WhatsApp time to open and display the picker.
+        delay(1200)
 
-        val canReadContacts = ContextCompat.checkSelfPermission(
-            context, Manifest.permission.READ_CONTACTS
-        ) == PackageManager.PERMISSION_GRANTED
-        if (!canReadContacts) return null
-
-        val matches = mutableListOf<ContactPhoneMatch>()
-        val projection = arrayOf(
-            ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME,
-            ContactsContract.CommonDataKinds.Phone.NUMBER
-        )
-
-        runCatching {
-            context.contentResolver.query(
-                ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
-                projection, null, null, null
-            )?.use { cursor ->
-                val nameIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME)
-                val numberIndex = cursor.getColumnIndex(ContactsContract.CommonDataKinds.Phone.NUMBER)
-                if (nameIndex < 0 || numberIndex < 0) return@use
-
-                while (cursor.moveToNext()) {
-                    val displayName = cursor.getString(nameIndex)?.trim().orEmpty()
-                    val numberRaw = cursor.getString(numberIndex)?.trim().orEmpty()
-                    if (displayName.isBlank() || numberRaw.isBlank()) continue
-                    val sanitizedNumber = sanitizePhoneNumber(numberRaw) ?: continue
-                    val normalizedName = normalizeName(displayName)
-                    if (normalizedName.isBlank()) continue
-                    val score = matchScore(normalizedQuery, normalizedName) ?: continue
-                    matches += ContactPhoneMatch(
-                        displayName = displayName,
-                        phoneNumber = sanitizedNumber,
-                        matchKind = score.matchKind,
-                        score = score.value
-                    )
-                }
-            }
+        // Filter the picker to the chat, then select it. Search is best-effort (some
+        // WhatsApp versions show the chat directly); selecting the row is mandatory.
+        poll { typeInPickerSearch(query) }
+        val selected = poll { tapChatRow(query) }
+        if (!selected) {
+            return notSentResult(
+                spoken = "I couldn't find a WhatsApp chat called $query, so I didn't send it.",
+                error = "Could not locate the chat \"$query\" in the WhatsApp picker."
+            ) { c -> c.put("contact_name", rawName).put("target", query) }
         }
 
-        return matches.minWithOrNull(
-            compareBy<ContactPhoneMatch> { it.score ?: Int.MAX_VALUE }.thenBy { it.displayName.length }
-        )
+        return notSentResult(
+            spoken = "I selected $query in WhatsApp. I need to finish the final send manually.",
+            error = "WhatsApp share picker target was selected; final send is intentionally left to the phone agent."
+        ) { c ->
+            c.put("contact_name", rawName)
+                .put("target", query)
+                .put("selected_target", query)
+                .put("state", "target_selected_in_share_picker")
+                .put("partial_completion", true)
+                .put("needs_manual_final_send", true)
+        }
     }
 
-    private fun sanitizePhoneNumber(value: String): String? {
-        val trimmed = value.trim()
-        if (trimmed.isBlank()) return null
-        val hasPlus = trimmed.startsWith("+")
-        val digitsOnly = trimmed.filter { it.isDigit() }
-        if (digitsOnly.length < 3) return null
-        return if (hasPlus) "+$digitsOnly" else digitsOnly
+    /**
+     * WhatsApp renders asynchronously and this is a shared tool (no re-observation), so each
+     * step is polled until the UI settles. Same budget as the original single send wait.
+     */
+    private suspend fun pollTapSendButton(): Boolean = poll { tapSendButton() }
+
+    private suspend fun poll(action: suspend () -> Boolean): Boolean {
+        repeat(SEND_TAP_ATTEMPTS) {
+            delay(SEND_TAP_INTERVAL_MS)
+            if (runCatching { action() }.getOrDefault(false)) return true
+        }
+        return false
     }
 
-    private fun normalizeName(value: String): String =
-        value.lowercase(Locale.US).replace(Regex("[^a-z0-9]+"), " ").trim().replace(Regex("\\s+"), " ")
+    private fun successResult(
+        spoken: String,
+        matchKind: String,
+        fill: (JSONObject) -> JSONObject
+    ) = SharedToolExecutionResult(
+        toolName = SharedToolSchemas.TOOL_SEND_WHATSAPP,
+        content = fill(
+            JSONObject()
+                .put("ok", true)
+                .put("tool", SharedToolSchemas.TOOL_SEND_WHATSAPP)
+                .put("match_kind", matchKind)
+        ),
+        chatResponse = spoken
+    )
 
-    private fun matchScore(query: String, name: String): NameMatchScore? {
-        if (name == query) return NameMatchScore(0, "exact")
-        val nameTokens = name.split(" ").filter { it.isNotBlank() }
-        if (nameTokens.any { it == query }) return NameMatchScore(1, "token_exact")
-        if (name.startsWith("$query ")) return NameMatchScore(2, "prefix")
-        if (name.contains(" $query ")) return NameMatchScore(3, "contains")
-        if (nameTokens.any { token -> token.startsWith(query) && query.length >= 2 }) return NameMatchScore(4, "token_prefix")
-        return null
-    }
+    private fun notSentResult(
+        spoken: String,
+        error: String,
+        fill: (JSONObject) -> JSONObject
+    ) = SharedToolExecutionResult(
+        toolName = SharedToolSchemas.TOOL_SEND_WHATSAPP,
+        content = fill(
+            JSONObject()
+                .put("ok", false)
+                .put("tool", SharedToolSchemas.TOOL_SEND_WHATSAPP)
+                .put("error", error)
+        ),
+        chatResponse = spoken
+    )
 
     private fun errorResult(
         error: String,
@@ -179,12 +185,8 @@ internal class WhatsAppToolService(
         chatResponse = chatResponse
     )
 
-    private data class NameMatchScore(val value: Int, val matchKind: String)
-
-    private data class ContactPhoneMatch(
-        val displayName: String,
-        val phoneNumber: String,
-        val matchKind: String,
-        val score: Int? = null
-    )
+    private companion object {
+        private const val SEND_TAP_ATTEMPTS = 5
+        private const val SEND_TAP_INTERVAL_MS = 600L
+    }
 }

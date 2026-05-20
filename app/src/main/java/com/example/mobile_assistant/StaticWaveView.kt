@@ -18,7 +18,7 @@ class StaticWaveView @JvmOverloads constructor(
     defStyleAttr: Int = 0
 ) : View(context, attrs, defStyleAttr) {
 
-    private val barCount = 80
+    private val barCount = 26
     private val heights = FloatArray(barCount)
     private val targetHeights = FloatArray(barCount)
     private val phases = FloatArray(barCount)
@@ -43,7 +43,7 @@ class StaticWaveView @JvmOverloads constructor(
 
     fun start() {
         isActive = true
-        targetAmplitude = 0.6f
+        targetAmplitude = 0.45f
         lastFrameTime = System.nanoTime()
         postInvalidateOnAnimation()
     }
@@ -60,7 +60,7 @@ class StaticWaveView @JvmOverloads constructor(
     }
 
     private fun updateState(dt: Float) {
-        time += dt * 2.2
+        time += dt * 1.6
 
         // Smooth amplitude interpolation
         amplitude += (targetAmplitude - amplitude) * 0.08f
@@ -81,7 +81,7 @@ class StaticWaveView @JvmOverloads constructor(
             targetHeights[i] = (combined * amplitude).coerceIn(0f, 1f)
 
             // Per-bar flicker (static effect)
-            if (isActive && Random.nextFloat() < 0.15f) {
+            if (isActive && Random.nextFloat() < 0.06f) {
                 targetHeights[i] *= Random.nextFloat() * 0.5f + 0.5f
             }
 
@@ -105,7 +105,7 @@ class StaticWaveView @JvmOverloads constructor(
         if (w == 0f || h == 0f) return
 
         val spacing = w / barCount
-        val barWidth = spacing * 0.38f
+        val barWidth = spacing * 0.42f
 
         barPaint.strokeCap = Paint.Cap.ROUND
         glowPaint.strokeCap = Paint.Cap.ROUND
@@ -118,9 +118,9 @@ class StaticWaveView @JvmOverloads constructor(
             val alpha = (heights[i] * 210f + 40f).toInt().coerceIn(0, 255)
 
             // Glow layer: wider, dimmer, creates soft glow
-            glowPaint.strokeWidth = barWidth + 5f
+            glowPaint.strokeWidth = barWidth + 6f
             glowPaint.color = accentColor
-            glowPaint.alpha = (alpha * 0.18f).toInt()
+            glowPaint.alpha = (alpha * 0.06f).toInt()
             canvas.drawLine(x, h, x, h - barH, glowPaint)
 
             // Main bar with gradient effect (brighter at tip)

@@ -31,6 +31,28 @@ internal object AgentToolExecutorSupport {
         }
     }
 
+    fun composeEmailDraftQuestion(
+        to: String = "",
+        subject: String = "",
+        body: String = ""
+    ): String {
+        val recipientText = to.trim().takeIf { it.isNotBlank() } ?: "the recipient"
+        val subjectText = subject.trim().takeIf { it.isNotBlank() } ?: "(no subject)"
+        val bodyText = body.trim().takeIf { it.isNotBlank() } ?: "(no message body)"
+        val questionSeparator = if (bodyText.lastOrNull() in setOf('.', '!', '?')) " " else ". "
+        return normalizeQuickQuestion(
+            "I've drafted an email to $recipientText with subject line $subjectText and the message $bodyText${questionSeparator}Would you like me to send it?"
+        )
+    }
+
+    fun shouldReusePendingEmailDraft(
+        hasDraftPayload: Boolean,
+        confirmSend: Boolean,
+        hasPendingDraft: Boolean
+    ): Boolean {
+        return !hasDraftPayload && (confirmSend || hasPendingDraft)
+    }
+
     fun result(
         toolCallId: String,
         content: JSONObject,

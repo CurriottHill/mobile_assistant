@@ -4,23 +4,29 @@ import android.Manifest
 import android.animation.ObjectAnimator
 import android.animation.PropertyValuesHolder
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Shader
+import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.graphics.drawable.ShapeDrawable
 import android.graphics.drawable.shapes.RectShape
 import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.net.Uri
 import android.util.Base64
 import android.os.Build
 import android.content.res.ColorStateList
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
+import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
@@ -80,12 +86,40 @@ class AssistantOverlayController(
         private const val SILENCE_STOP_MS   = 700L
         private const val MAX_RECORDING_MS  = 15_000L
         private const val SPEECH_THRESHOLD  = 400
+        private const val AUDIO_DUCK_FOCUS_GAIN = AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
+    }
+
+    private enum class AudioDuckReason {
+        LISTENING,
+        ASSISTANT_SPEAKING
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private val httpClient = OkHttpClient()
+    private val spotifyService by lazy { SpotifyService(service.applicationContext) }
+    private val googleAccountService by lazy { GoogleAccountService(service.applicationContext) }
+    private val audioManager =
+        service.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val inputMethodManager =
         service.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
+    private val audioFocusChangeListener = AudioManager.OnAudioFocusChangeListener { }
+    private val audioFocusRequest by lazy(LazyThreadSafetyMode.NONE) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            AudioFocusRequest.Builder(AUDIO_DUCK_FOCUS_GAIN)
+                .setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_ASSISTANT)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                .setWillPauseWhenDucked(false)
+                .setAcceptsDelayedFocusGain(false)
+                .setOnAudioFocusChangeListener(audioFocusChangeListener)
+                .build()
+        } else {
+            null
+        }
+    }
 
     private var mediaRecorder: MediaRecorder? = null
     private var recordingFile: File? = null
@@ -131,6 +165,8 @@ class AssistantOverlayController(
     private var speechDurationInCurrentRecordingMs = 0L
     private var isAgentPaused = false
     private var isAgentRunning = false
+    private val activeAudioDuckReasons = mutableSetOf<AudioDuckReason>()
+    private var hasRequestedAudioDuck = false
 
     private val isCardOpen: Boolean get() = responseCard.visibility == View.VISIBLE
 
@@ -164,6 +200,18 @@ class AssistantOverlayController(
                     appendAssistantMessage(response)
                 }
 
+                override fun onToolCalled(toolName: String) {
+                    appendToolTag(toolName)
+                }
+
+                override fun onAgentReasoning(text: String) {
+                    appendReasoningMessage(text)
+                }
+
+                override fun onAgentUiAction(action: AssistantUiAction) {
+                    appendAssistantAction(action)
+                }
+
                 override fun onAgentSpeak(message: String) {
                     appendAssistantMessage(message)
                     speakAssistantResponse(message)
@@ -187,6 +235,10 @@ class AssistantOverlayController(
 
                 override fun onAgentApiKeyMissing() {
                     Toast.makeText(service, service.getString(R.string.assist_key_missing_short), Toast.LENGTH_SHORT).show()
+                }
+
+                override fun onAgentFallbackToOpenAi() {
+                    appendFallbackTag()
                 }
 
                 override fun onAgentError(message: String?) {
@@ -216,6 +268,8 @@ class AssistantOverlayController(
         ttsJob?.cancel()
         stopTtsPlayback()
         stopRecordingIfNeeded(deleteOutput = true)
+        setAudioDucking(AudioDuckReason.LISTENING, active = false)
+        setAudioDucking(AudioDuckReason.ASSISTANT_SPEAKING, active = false)
         scope.cancel()
     }
 
@@ -229,7 +283,7 @@ class AssistantOverlayController(
         cardMicButton.setOnClickListener { onCardMicClicked() }
         cardKeyboardButton.setOnClickListener { toggleCardKeyboardMode() }
         cardCancelListeningButton.setOnClickListener { cancelAudioCaptureAndTranscription() }
-        gradientBg.setOnClickListener { onCollapse() }
+        gradientBg.setOnClickListener { animateOutThen { onCollapse() } }
     }
 
     private fun setupInputHandlers() {
@@ -294,6 +348,12 @@ class AssistantOverlayController(
     }
 
 
+    /** Eval harness entry point: run the task through the phone-agent loop directly. */
+    fun submitEvalPrompt(text: String) {
+        cancelAudioCaptureAndTranscription()
+        agentManager.runPhoneTaskDirectly(text)
+    }
+
     // ─── Bottom-panel input ──────────────────────────────────────────────────
 
     private fun sendTypedMessage(): Boolean {
@@ -345,6 +405,7 @@ class AssistantOverlayController(
         isListening = false
         onListeningStateChanged(false)
         stopRecordingIfNeeded(deleteOutput = true)
+        setAudioDucking(AudioDuckReason.LISTENING, active = false)
         recordingStartedAtMs = 0L
         updateTranscript("")
     }
@@ -358,6 +419,7 @@ class AssistantOverlayController(
             onListeningStateChanged(false)
         }
         stopRecordingIfNeeded(deleteOutput = true)
+        setAudioDucking(AudioDuckReason.LISTENING, active = false)
         recordingStartedAtMs = 0L
         updateTranscript("")
         updateCancelButtonsVisibility()
@@ -416,12 +478,14 @@ class AssistantOverlayController(
         }.onSuccess {
             recordingStartedAtMs = System.currentTimeMillis()
             isListening = true
+            setAudioDucking(AudioDuckReason.LISTENING, active = true)
             onListeningStateChanged(true)
             startAmplitudeUpdates()
         }.onFailure { throwable ->
             stopRecordingIfNeeded(deleteOutput = true)
             recordingStartedAtMs = 0L
             isListening = false
+            setAudioDucking(AudioDuckReason.LISTENING, active = false)
             onListeningStateChanged(false)
             Toast.makeText(service, service.getString(R.string.assist_listening_failed), Toast.LENGTH_SHORT).show()
         }
@@ -437,6 +501,7 @@ class AssistantOverlayController(
         }
 
         isListening = false
+        setAudioDucking(AudioDuckReason.LISTENING, active = false)
         onListeningStateChanged(false)
 
         val audioFile = stopRecordingIfNeeded(deleteOutput = false)
@@ -570,10 +635,15 @@ class AssistantOverlayController(
 
         ttsJob?.cancel()
         stopTtsPlayback()
+        setAudioDucking(AudioDuckReason.ASSISTANT_SPEAKING, active = true)
 
         ttsJob = scope.launch {
-            runCatching { streamCartesiaTts(apiKey, text) }
-            ttsIsPlaying = false
+            try {
+                runCatching { streamCartesiaTts(apiKey, text) }
+            } finally {
+                ttsIsPlaying = false
+                setAudioDucking(AudioDuckReason.ASSISTANT_SPEAKING, active = false)
+            }
         }
     }
 
@@ -677,11 +747,54 @@ class AssistantOverlayController(
         val track = ttsAudioTrack
         ttsAudioTrack = null
         ttsIsPlaying = false
+        setAudioDucking(AudioDuckReason.ASSISTANT_SPEAKING, active = false)
         if (track != null) {
             runCatching { track.pause() }
             runCatching { track.flush() }
             runCatching { track.release() }
         }
+    }
+
+    private fun setAudioDucking(reason: AudioDuckReason, active: Boolean) {
+        val changed = if (active) {
+            activeAudioDuckReasons.add(reason)
+        } else {
+            activeAudioDuckReasons.remove(reason)
+        }
+        if (!changed) return
+        updateAudioDucking()
+    }
+
+    private fun updateAudioDucking() {
+        val shouldDuck = activeAudioDuckReasons.isNotEmpty()
+        if (shouldDuck == hasRequestedAudioDuck) return
+
+        if (shouldDuck) {
+            val granted = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val request = audioFocusRequest ?: return
+                audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            } else {
+                @Suppress("DEPRECATION")
+                audioManager.requestAudioFocus(
+                    audioFocusChangeListener,
+                    AudioManager.STREAM_MUSIC,
+                    AUDIO_DUCK_FOCUS_GAIN
+                ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            }
+            hasRequestedAudioDuck = granted
+            if (!granted) {
+                activeAudioDuckReasons.clear()
+            }
+            return
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            audioFocusRequest?.let { audioManager.abandonAudioFocusRequest(it) }
+        } else {
+            @Suppress("DEPRECATION")
+            audioManager.abandonAudioFocus(audioFocusChangeListener)
+        }
+        hasRequestedAudioDuck = false
     }
 
     // ─── Amplitude + silence detection ───────────────────────────────────────
@@ -824,10 +937,17 @@ class AssistantOverlayController(
 
     private fun openChatCard() {
         if (isCardOpen) return
+        val baseY = -currentImeBottom.toFloat()
         responseCard.apply {
             visibility = View.VISIBLE
-            alpha = 1f
-            translationY = -currentImeBottom.toFloat()
+            alpha = 0f
+            translationY = baseY + dp(16).toFloat()
+            animate()
+                .alpha(1f)
+                .translationY(baseY)
+                .setDuration(260L)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
         }
     }
 
@@ -862,6 +982,176 @@ class AssistantOverlayController(
         }
     }
 
+    private fun appendReasoningMessage(text: String) {
+        if (text.isBlank()) return
+        val bubble = addChatBubble(
+            text,
+            color(R.color.assistant_code_text),
+            13f,
+            color(R.color.assistant_reasoning_bg),
+            1.4f
+        ) {
+            width = LinearLayout.LayoutParams.MATCH_PARENT
+            setMargins(0, dp(4), dp(52), dp(4))
+        }
+        bubble.setTypeface(bubble.typeface, Typeface.ITALIC)
+    }
+
+    private fun appendToolTag(toolName: String) {
+        val tagView = TextView(service).apply {
+            text = toolName
+            setTextColor(color(R.color.assistant_code_text))
+            textSize = 11f
+            typeface = Typeface.MONOSPACE
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            background = roundedBubble(color(R.color.assistant_code_bg))
+        }
+        tagView.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, dp(2), dp(52), dp(2))
+        }
+        chatLog.addView(tagView)
+        tagView.alpha = 0f
+        tagView.translationY = dp(8).toFloat()
+        tagView.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(180L)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+        constrainCardHeight()
+    }
+
+    private fun appendFallbackTag() {
+        val tagView = TextView(service).apply {
+            text = "via ChatGPT"
+            setTextColor(color(R.color.assistant_code_text))
+            textSize = 11f
+            typeface = Typeface.MONOSPACE
+            setPadding(dp(10), dp(5), dp(10), dp(5))
+            background = roundedBubble(color(R.color.assistant_code_bg))
+        }
+        tagView.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, dp(2), dp(52), dp(2))
+        }
+        chatLog.addView(tagView)
+        tagView.alpha = 0f
+        tagView.translationY = dp(8).toFloat()
+        tagView.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(180L)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+        constrainCardHeight()
+    }
+
+    private fun appendAssistantAction(action: AssistantUiAction) {
+        val button = TextView(service).apply {
+            text = action.label
+            setTextColor(color(R.color.home_button_primary_text))
+            textSize = 14f
+            gravity = Gravity.CENTER
+            isClickable = true
+            isFocusable = true
+            minHeight = dp(44)
+            setPadding(dp(16), dp(10), dp(16), dp(10))
+            paint.isFakeBoldText = true
+            background = roundedBubble(color(R.color.home_button_primary))
+            setOnClickListener { launchAssistantAction(action) }
+        }
+        button.layoutParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply {
+            setMargins(0, dp(2), dp(52), dp(8))
+        }
+        chatLog.addView(button)
+        button.alpha = 0f
+        button.translationY = dp(10).toFloat()
+        button.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(220L)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
+        constrainCardHeight()
+    }
+
+    private fun launchAssistantAction(action: AssistantUiAction) {
+        when (action.type) {
+            AssistantUiActionType.CONNECT_SPOTIFY -> {
+                val launchResult = spotifyService.createLoginIntent()
+                launchOAuthIntent(
+                    intent = launchResult.intent,
+                    ok = launchResult.ok,
+                    message = launchResult.message,
+                    noBrowserMessageRes = R.string.spotify_no_browser_found
+                )
+            }
+            AssistantUiActionType.CONNECT_GOOGLE -> {
+                val launchResult = googleAccountService.createLoginIntent()
+                launchOAuthIntent(
+                    intent = launchResult.intent,
+                    ok = launchResult.ok,
+                    message = launchResult.message,
+                    noBrowserMessageRes = R.string.google_no_browser_found
+                )
+            }
+            AssistantUiActionType.OPEN_SETTINGS -> launchSettingsAction(action)
+        }
+    }
+
+    private fun launchSettingsAction(action: AssistantUiAction) {
+        val intentAction = action.intentAction?.takeIf { it.isNotBlank() }
+        if (intentAction == null) {
+            Toast.makeText(service, action.label, Toast.LENGTH_LONG).show()
+            return
+        }
+        val intent = Intent(intentAction).apply {
+            action.dataUri?.takeIf { it.isNotBlank() }?.let { data = Uri.parse(it) }
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val fallback = Intent(android.provider.Settings.ACTION_SETTINGS)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        runCatching {
+            val launchIntent = if (intent.resolveActivity(service.packageManager) != null) {
+                intent
+            } else {
+                fallback
+            }
+            service.startActivity(launchIntent)
+        }.onFailure {
+            Toast.makeText(service, action.label, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    private fun launchOAuthIntent(
+        intent: Intent?,
+        ok: Boolean,
+        message: String,
+        noBrowserMessageRes: Int
+    ) {
+        if (!ok || intent == null) {
+            Toast.makeText(service, message, Toast.LENGTH_LONG).show()
+            return
+        }
+        if (intent.resolveActivity(service.packageManager) == null) {
+            Toast.makeText(service, service.getString(noBrowserMessageRes), Toast.LENGTH_LONG).show()
+            return
+        }
+        runCatching {
+            service.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }.onFailure {
+            Toast.makeText(service, message, Toast.LENGTH_LONG).show()
+        }
+    }
+
     private fun appendCompletionMessage(text: String) {
         addChatBubble(text, color(R.color.assistant_completion_text), 13f, color(R.color.assistant_completion_bg), 1.35f) {
             width = LinearLayout.LayoutParams.WRAP_CONTENT
@@ -887,6 +1177,14 @@ class AssistantOverlayController(
             LinearLayout.LayoutParams.WRAP_CONTENT
         ).apply(layoutConfig)
         chatLog.addView(bubble)
+        bubble.alpha = 0f
+        bubble.translationY = dp(12).toFloat()
+        bubble.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(220L)
+            .setInterpolator(DecelerateInterpolator())
+            .start()
         constrainCardHeight()
         return bubble
     }
@@ -1088,24 +1386,77 @@ class AssistantOverlayController(
 
     // ─── Animations ──────────────────────────────────────────────────────────
 
+    /** The currently visible primary surface (chat card by default; bottom panel if shown). */
+    private fun activeSurface(): View =
+        if (bottomPanel.visibility == View.VISIBLE) bottomPanel else responseCard
+
+    /** Replays the entrance — used when the overlay is re-expanded after a collapse animation
+     *  left the surface faded/offset. */
+    fun replayEntrance() = playEntranceAnimation()
+
+    /** Calm Nimbus entrance: scrim fades in, the card glides up and assembles with a light stagger. */
     private fun playEntranceAnimation() {
-        gradientBg.alpha = 1f
-        bottomPanel.visibility = View.GONE
-        bottomPanel.translationY = 0f
-        responseCard.alpha = 1f
-        responseCard.translationY = 0f
         micButton.scaleX = 1f
         micButton.scaleY = 1f
+
+        val surface = activeSurface()
+        gradientBg.alpha = 0f
+        surface.alpha = 0f
+        surface.translationY = dp(64).toFloat()
+
+        rootContainer.post {
+            gradientBg.animate().alpha(1f).setDuration(200L).start()
+            surface.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(320L)
+                .setInterpolator(DecelerateInterpolator(1.4f))
+                .start()
+            staggerChildrenIn(surface)
+        }
+    }
+
+    /** Subtle staggered fade/rise of the surface's visible children — restrained, never bouncy. */
+    private fun staggerChildrenIn(surface: View) {
+        if (surface !is android.view.ViewGroup) return
+        var startDelay = 70L
+        for (i in 0 until surface.childCount) {
+            val child = surface.getChildAt(i)
+            if (child.visibility != View.VISIBLE) continue
+            child.alpha = 0f
+            child.translationY = dp(10).toFloat()
+            child.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setStartDelay(startDelay)
+                .setDuration(260L)
+                .setInterpolator(DecelerateInterpolator())
+                .start()
+            startDelay += 45L
+        }
+    }
+
+    /** Graceful exit: the card slides down and fades with the scrim, then runs [action]. */
+    fun animateOutThen(action: () -> Unit) {
+        val surface = activeSurface()
+        gradientBg.animate().alpha(0f).setDuration(220L).start()
+        surface.animate()
+            .alpha(0f)
+            .translationY(dp(72).toFloat())
+            .setDuration(220L)
+            .setInterpolator(AccelerateInterpolator(1.3f))
+            .withEndAction { runCatching { action() } }
+            .start()
     }
 
     private fun startMicPulse() {
         micPulseAnimator?.cancel()
         micPulseAnimator = ObjectAnimator.ofPropertyValuesHolder(
             micButton,
-            PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.08f, 1f),
-            PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.08f, 1f)
+            PropertyValuesHolder.ofFloat(View.SCALE_X, 1f, 1.04f, 1f),
+            PropertyValuesHolder.ofFloat(View.SCALE_Y, 1f, 1.04f, 1f)
         ).apply {
-            duration = 1200
+            duration = 1500
             repeatCount = ObjectAnimator.INFINITE
             interpolator = DecelerateInterpolator()
             start()
@@ -1120,7 +1471,8 @@ class AssistantOverlayController(
     }
 
     private fun createGradient(): ShapeDrawable {
-        val r = 11; val g = 15; val b = 26
+        // Warm cream scrim (#F6F1EA, the home canvas) — soft dim that keeps the screen behind readable.
+        val r = 246; val g = 241; val b = 234
         return ShapeDrawable(RectShape()).apply {
             shaderFactory = object : ShapeDrawable.ShaderFactory() {
                 override fun resize(width: Int, height: Int): Shader {
@@ -1129,10 +1481,10 @@ class AssistantOverlayController(
                         intArrayOf(
                             Color.argb(0, r, g, b),
                             Color.argb(0, r, g, b),
-                            Color.argb(140, r, g, b),
+                            Color.argb(120, r, g, b),
                             Color.argb(210, r, g, b)
                         ),
-                        floatArrayOf(0f, 0.40f, 0.72f, 1f),
+                        floatArrayOf(0f, 0.45f, 0.74f, 1f),
                         Shader.TileMode.CLAMP
                     )
                 }

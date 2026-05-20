@@ -20,7 +20,11 @@ val localProperties = Properties().apply {
 
 val openAiApiKey = escapeBuildConfigValue(localProperties.getProperty("OPENAI_API_KEY", ""))
 
+val anthropicApiKey = escapeBuildConfigValue(localProperties.getProperty("ANTHROPIC_API_KEY", ""))
+
 val cartesiaApiKey = escapeBuildConfigValue(localProperties.getProperty("CARTESIA_API_KEY", ""))
+
+val mapsApiKey = escapeBuildConfigValue(localProperties.getProperty("MAPS_API_KEY", ""))
 
 val spotifyClientId = escapeBuildConfigValue(localProperties.getProperty("SPOTIFY_CLIENT_ID", ""))
 val spotifyRedirectUriRaw = localProperties.getProperty("SPOTIFY_REDIRECT_URI", "mobile_assistant://spotify-auth-callback")
@@ -44,7 +48,9 @@ android {
         versionCode = 1
         versionName = "1.0"
         buildConfigField("String", "OPENAI_API_KEY", "\"$openAiApiKey\"")
+        buildConfigField("String", "ANTHROPIC_API_KEY", "\"$anthropicApiKey\"")
         buildConfigField("String", "CARTESIA_API_KEY", "\"$cartesiaApiKey\"")
+        buildConfigField("String", "MAPS_API_KEY", "\"$mapsApiKey\"")
         buildConfigField("String", "SPOTIFY_CLIENT_ID", "\"$spotifyClientId\"")
         buildConfigField("String", "SPOTIFY_REDIRECT_URI", "\"$spotifyRedirectUri\"")
         manifestPlaceholders["spotifyRedirectScheme"] = spotifyRedirectScheme
@@ -56,6 +62,8 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+            isDebuggable = true
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -79,7 +87,10 @@ dependencies {
     implementation(libs.androidx.constraintlayout)
     implementation(libs.squareup.okhttp)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.play.services.auth)
     testImplementation(libs.junit)
+    // Real org.json for unit tests (the Android stub throws "not mocked").
+    testImplementation("org.json:json:20240303")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 }

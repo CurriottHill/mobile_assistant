@@ -1,0 +1,68 @@
+{
+  "schema_version": 1,
+  "tasks": [
+    {
+      "id": "open_settings_wifi",
+      "prompt": "Open the phone Settings and go to the Wi-Fi screen",
+      "success_criteria": "The device Settings app is open on the Wi-Fi (or Network & internet > Wi-Fi) screen showing the list of networks or the Wi-Fi toggle.",
+      "setup_hint": "Start from the home screen with Settings closed."
+    },
+    {
+      "id": "set_timer_5min",
+      "prompt": "Set a 5 minute timer",
+      "success_criteria": "The Clock app shows a timer set to (about) 5 minutes that is running or ready to start.",
+      "setup_hint": "Start from the home screen. Make sure the Clock app has no leftover timers."
+    },
+    {
+      "id": "whatsapp_send_hi",
+      "prompt": "Send a WhatsApp message saying 'hi from eval' to the test contact",
+      "success_criteria": "A WhatsApp chat shows an outgoing 'hi from eval' message bubble that was just sent.",
+      "setup_hint": "Have WhatsApp logged in and a known test contact available. Close WhatsApp to the home screen first."
+    },
+    {
+      "id": "chat_only_capital",
+      "prompt": "What is the capital of France?",
+      "success_criteria": "The assistant answers 'Paris' conversationally WITHOUT touching the phone (agent must NOT be invoked).",
+      "setup_hint": "No device setup needed. This checks the chat-vs-agent routing (agent_invoked should be false)."
+    },
+    {
+      "id": "search_weather",
+      "prompt": "Search the web for today's weather in London",
+      "success_criteria": "A browser or search result page is showing current weather information for London.",
+      "setup_hint": "Start from the home screen with a browser available and internet connectivity."
+    },
+    {
+      "id": "directions_london_via_oxford",
+      "prompt": "direct me to london with a stop in oxford",
+      "success_criteria": "A maps/navigation app shows a route from the current location (home) to London that includes a waypoint/stop in Oxford (a multi-stop route: Home -> Oxford -> London).",
+      "setup_hint": "Start from the home screen with a maps app installed and location enabled. Close the maps app first."
+    },
+    {
+      "id": "directions_paris_via_london_stt_noise",
+      "prompt": "direkt me too parris with a stopp inn lundon ok go now",
+      "success_criteria": "Despite the garbled speech-to-text wording, a maps/navigation app shows a route from the current location to Paris that includes a waypoint/stop in London (Home -> London -> Paris).",
+      "setup_hint": "Start from the home screen with a maps app installed and location enabled. This task intentionally uses misspelled/STT-garbled wording to test robustness to noisy transcription — close the maps app first."
+    },
+    {
+      "id": "spotify_create_playlist_basic",
+      "prompt": "Create a Spotify playlist called Eval Mix",
+      "success_criteria": "A new Spotify playlist named 'Eval Mix' exists in the user's account, created via the spotify_create_playlist tool/API (the agent should NOT need to drive the Spotify UI).",
+      "setup_hint": "Spotify must be connected AND reconnected after the playlist-modify scopes were added, so the stored token has playlist-modify-private/public. Without reconnecting, the assistant should surface the 'reconnect Spotify' guidance, which is a valid negative-path check."
+    },
+    {
+      "id": "email_check_important",
+      "prompt": "Do I have any important emails today?",
+      "success_criteria": "The assistant uses the check_emails tool and gives a spoken conversational summary of important/recent email WITHOUT opening Gmail or any app (agent UI navigation not required).",
+      "setup_hint": "The Google account must be connected via the Connect Google screen. If not connected, the assistant should ask the user to connect Google first (valid negative-path check)."
+    },
+    { "id": "open_settings_bluetooth", "prompt": "Open the Bluetooth settings screen", "success_criteria": "The system Settings app is open on the Bluetooth screen.", "setup_hint": "Start from the home screen with Settings closed." },
+    { "id": "flashlight_on", "prompt": "Turn on the flashlight", "success_criteria": "The device torch/flashlight is turned on (agent reports success via toggle_flashlight).", "setup_hint": "Physical device with a camera flash; start from home." },
+    { "id": "set_volume_media_50", "prompt": "Set the media volume to 50 percent", "success_criteria": "Media stream volume is about half; the volume UI reflects ~50%.", "setup_hint": "Start from the home screen." },
+    { "id": "clipboard_roundtrip", "prompt": "Copy 'eval clip 42' to the clipboard then tell me what is on the clipboard", "success_criteria": "Assistant sets the clipboard then reports back 'eval clip 42'.", "setup_hint": "No special setup." },
+    { "id": "send_telegram_hi", "prompt": "Send a Telegram message saying 'hi from eval' to the test contact", "success_criteria": "A Telegram chat shows an outgoing 'hi from eval' message just sent.", "setup_hint": "Telegram logged in with a known test contact; close Telegram first." },
+    { "id": "find_about_phone", "prompt": "In Settings, find and open the About phone section", "success_criteria": "The About phone screen is visible (reached via find_text auto-scroll).", "setup_hint": "Start on the Settings main screen." },
+    { "id": "daily_briefing", "prompt": "What do I need to do today?", "success_criteria": "Assistant verbally summarizes today's calendar events AND recent important notifications WITHOUT opening Calendar or the notification shade.", "setup_hint": "Google account connected and notification access enabled, with at least one event today and a recent Slack/Gmail notification." },
+    { "id": "travel_time_home", "prompt": "How long does it take to drive to London from home and how many miles is it?", "success_criteria": "Assistant states a travel duration AND a distance in miles WITHOUT opening Maps (uses maps_travel_time).", "setup_hint": "Set a home address on the device 'Me' contact; MAPS_API_KEY present in local.properties for the accurate path (otherwise the web fallback is exercised)." },
+    { "id": "whatsapp_send_group_handsfree", "prompt": "Send a WhatsApp message saying 'hi from eval' to the family group chat", "success_criteria": "The WhatsApp 'Family' group shows an outgoing 'hi from eval' message, sent fully automatically with NO user taps on the phone.", "setup_hint": "WhatsApp logged in with a group named 'Family'; close WhatsApp first; do not touch the screen during the run." }
+  ]
+}

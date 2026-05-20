@@ -39,12 +39,6 @@ class AssistantActivity : AppCompatActivity() {
                 Toast.makeText(this, getString(R.string.assist_contacts_permission_recommended), Toast.LENGTH_SHORT).show()
             }
 
-            val callLogGranted = grants[Manifest.permission.READ_CALL_LOG]
-                ?: (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED)
-            if (!callLogGranted) {
-                Toast.makeText(this, getString(R.string.assist_call_log_permission_recommended), Toast.LENGTH_SHORT).show()
-            }
-
             val callGranted = grants[Manifest.permission.CALL_PHONE]
                 ?: (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED)
             if (!callGranted) {
@@ -55,6 +49,12 @@ class AssistantActivity : AppCompatActivity() {
                 ?: (ContextCompat.checkSelfPermission(this, Manifest.permission.SEND_SMS) == PackageManager.PERMISSION_GRANTED)
             if (!smsGranted) {
                 Toast.makeText(this, getString(R.string.assist_sms_permission_recommended), Toast.LENGTH_SHORT).show()
+            }
+
+            val calendarGranted = grants[Manifest.permission.WRITE_CALENDAR]
+                ?: (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_CALENDAR) == PackageManager.PERMISSION_GRANTED)
+            if (!calendarGranted) {
+                Toast.makeText(this, getString(R.string.assist_calendar_permission_recommended), Toast.LENGTH_SHORT).show()
             }
 
             showOverlayAndFinish()
@@ -74,11 +74,6 @@ class AssistantActivity : AppCompatActivity() {
         ) {
             missingPermissions += Manifest.permission.READ_CONTACTS
         }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALL_LOG)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            missingPermissions += Manifest.permission.READ_CALL_LOG
-        }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CALL_PHONE)
             != PackageManager.PERMISSION_GRANTED
         ) {
@@ -88,6 +83,16 @@ class AssistantActivity : AppCompatActivity() {
             != PackageManager.PERMISSION_GRANTED
         ) {
             missingPermissions += Manifest.permission.SEND_SMS
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALENDAR)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            missingPermissions += Manifest.permission.READ_CALENDAR
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_CALENDAR)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            missingPermissions += Manifest.permission.WRITE_CALENDAR
         }
 
         if (missingPermissions.isEmpty()) {

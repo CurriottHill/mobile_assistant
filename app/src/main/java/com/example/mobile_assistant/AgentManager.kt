@@ -1,6 +1,7 @@
 package com.example.mobile_assistant
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
@@ -27,20 +28,63 @@ class AgentManager(
     private val screenReader: () -> String?
 ) {
 
+    private enum class SearchProvider {
+        ANTHROPIC,
+        OPENAI
+    }
+
+    private data class SearchExecutionContext(
+        val provider: SearchProvider,
+        val model: String
+    )
+
     private data class SharedChatToolResult(
         val toolName: String,
-        val response: String
+        val response: String,
+        val resultContent: JSONObject,
+        val uiAction: AssistantUiAction? = null,
+        val isAskUser: Boolean = false
     )
+
+    private data class ExecutedChatTool(
+        val name: String,
+        val argsDisplay: String,
+        val resultDisplay: String
+    )
+
+    private sealed interface ChatLoopOutcome {
+        val executedTools: List<ExecutedChatTool>
+
+        data class Continue(
+            val toolResults: JSONArray,
+            override val executedTools: List<ExecutedChatTool>
+        ) : ChatLoopOutcome
+        data class FinalResponse(
+            val response: String,
+            val isAskUser: Boolean = false,
+            val toolResults: JSONArray? = null,
+            override val executedTools: List<ExecutedChatTool> = emptyList()
+        ) : ChatLoopOutcome
+        data class HandoffToPhone(
+            val task: String,
+            val toolResults: JSONArray? = null,
+            override val executedTools: List<ExecutedChatTool> = emptyList()
+        ) : ChatLoopOutcome
+    }
 
     interface AgentCallbacks {
         fun onAgentThinkingStarted(userMessage: String)
         fun onAgentThinkingFinished()
         fun onAgentResponse(response: String)
+        fun onToolCalled(toolName: String) {}
+        fun onAgentReasoning(text: String) {}
+        fun onAgentUiAction(action: AssistantUiAction) {}
         fun onAgentSpeak(message: String)
         fun onAgentTaskComplete(summary: String)
         fun onAgentAskUser(question: String)
         fun onAgentApiKeyMissing()
         fun onAgentError(message: String? = null)
+        fun onAgentFallbackToOpenAi() {}
     }
 
     private val chatClient = OkHttpClient.Builder()
@@ -52,12 +96,71 @@ class AgentManager(
     private val clockToolService = ClockToolService(appContext)
     private val callToolService = CallToolService(appContext)
     private val smsToolService = SmsToolService(appContext)
+    private val mapsToolService = MapsToolService(appContext)
+    private val googleAccountService = GoogleAccountService(appContext)
     private val whatsAppToolService = WhatsAppToolService(
         context = appContext,
         tapSendButton = {
             AssistantAccessibilityService.instance?.let { service ->
                 ScreenReader.tapWhatsAppSendButton(service)
             } ?: false
+        },
+        openWhatsAppShare = { message ->
+            runCatching {
+                appContext.startActivity(
+                    Intent(Intent.ACTION_SEND)
+                        .setType("text/plain")
+                        .putExtra(Intent.EXTRA_TEXT, message)
+                        .setPackage("com.whatsapp")
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+                true
+            }.getOrDefault(false)
+        },
+        typeInPickerSearch = { query ->
+            AssistantAccessibilityService.instance?.let { service ->
+                ScreenReader.setTextByViewIdOrFocused(
+                    service,
+                    "com.whatsapp:id/search_input",
+                    query
+                )
+            } ?: false
+        },
+        tapChatRow = { name ->
+            AssistantAccessibilityService.instance?.let { service ->
+                ScreenReader.tapChatRowByName(service, name)
+            } ?: false
+        }
+    )
+    private val phoneUtilToolService = PhoneUtilToolService(appContext)
+    private val contactsToolService = ContactsToolService(appContext)
+    private val deviceMediaToolService = DeviceMediaToolService(appContext)
+    private val currentLocationToolService = CurrentLocationToolService(appContext)
+    private val notificationToolService = NotificationToolService(appContext)
+    private val mapsTravelTimeToolService = MapsTravelTimeToolService(
+        context = appContext,
+        searchWeb = { query ->
+            withContext(Dispatchers.IO) {
+                performWebSearch(query)
+            }
+        }
+    )
+    private val calendarToolService = CalendarToolService(
+        context = appContext,
+        tapSendButton = { selectors ->
+            AssistantAccessibilityService.instance?.let { service ->
+                ScreenReader.tapGmailSendButton(service) ||
+                    ScreenReader.tapSendButton(service, selectors)
+            } ?: false
+        },
+        sendEmailViaApi = { draft ->
+            googleAccountService.sendEmail(
+                to = draft.to,
+                cc = draft.cc,
+                bcc = draft.bcc,
+                subject = draft.subject,
+                body = draft.body
+            )
         }
     )
     private val sharedToolExecutor = SharedToolExecutor(
@@ -70,7 +173,21 @@ class AgentManager(
         spotifyService = spotifyService,
         clockToolService = clockToolService,
         smsToolService = smsToolService,
-        whatsAppToolService = whatsAppToolService
+        whatsAppToolService = whatsAppToolService,
+        mapsToolService = mapsToolService,
+        googleAccountService = googleAccountService,
+        phoneUtilToolService = phoneUtilToolService,
+        contactsToolService = contactsToolService,
+        deviceMediaToolService = deviceMediaToolService,
+        currentLocationToolService = currentLocationToolService,
+        mapsTravelTimeToolService = mapsTravelTimeToolService,
+        notificationToolService = notificationToolService
+    )
+
+    @Volatile
+    private var activeSearchContext = SearchExecutionContext(
+        provider = SearchProvider.ANTHROPIC,
+        model = ChatPrompt.MODEL
     )
 
     private val toolExecutor = AgentToolExecutor(
@@ -238,10 +355,36 @@ class AgentManager(
                 error = "Accessibility service is not connected."
             )
         },
+        closeApp = {
+            AssistantAccessibilityService.instance?.let { service ->
+                AppCloser.closeCurrentForegroundApp(service)
+            } ?: PressHomeResult(
+                pressed = false,
+                error = "Accessibility service is not connected."
+            )
+        },
+        openRecents = {
+            AssistantAccessibilityService.instance?.let { service ->
+                val pressed = service.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_RECENTS)
+                PressHomeResult(pressed = pressed)
+            } ?: PressHomeResult(
+                pressed = false,
+                error = "Accessibility service is not connected."
+            )
+        },
+        openNotifications = {
+            AssistantAccessibilityService.instance?.let { service ->
+                val pressed = service.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS)
+                PressHomeResult(pressed = pressed)
+            } ?: PressHomeResult(
+                pressed = false,
+                error = "Accessibility service is not connected."
+            )
+        },
+        calendarToolService = calendarToolService,
         sharedToolExecutor = sharedToolExecutor
     )
     private var chatJob: Job? = null
-    private var lastOpenAiApiKey: String? = null
     private var lastAgentApiKey: String? = null
     private var isPaused = false
     private var latestUserMessage = ""
@@ -252,8 +395,11 @@ class AgentManager(
     private var latestScreenshotRevision: Long? = null
     private var agentState = emptyAgentState()
     private val toolCallLog = mutableListOf<ToolCallSummary>()
-    private val actionTranscript = mutableListOf<ActionTranscriptEntry>()
-    private val chatHistory = mutableListOf<JSONObject>() // persistent across turns for Q&A
+    // Per-task eval transcript: populated for EvalRecorder.finalize only. NOT model-facing.
+    // The model reads conversation history (see `conversation`) plus live screen state each step.
+    private val evalTranscript = mutableListOf<ActionTranscriptEntry>()
+    private val conversation = ConversationHistory()
+    private val pendingTurnBlocks = mutableListOf<JSONObject>()
     private var lastUiChange = "none"
     private var lastSuccessfulToolName: String? = null
     private var lastTappedNodeRef: String? = null
@@ -269,22 +415,18 @@ class AgentManager(
         }
 
         isPaused = false
-        lastOpenAiApiKey = BuildConfig.OPENAI_API_KEY.trim().ifBlank { null }
         lastAgentApiKey = agentApiKey
         chatJob?.cancel()
         callbacks.onAgentThinkingStarted(message)
 
         if (shouldContinueCurrentAgentTask()) {
-            // Route through Haiku so it can update or replace the goal using
-            // the user's reply before sending it to the agent.
+            EvalRecorder.active?.markUserIntervened("user_message")
             val goal = agentState.currentGoal.ifBlank { latestUserMessage }
             val pending = agentState.pendingQuestion
             agentState = agentState.copy(needsUserInput = false, pendingQuestion = null)
             if (pending != null) {
-                chatHistory.add(
-                    JSONObject()
-                        .put("role", "user")
-                        .put("content", "The phone agent is mid-task working on: \"$goal\". It asked the user: \"$pending\". The user's reply follows. If the reply answers the question or adds to the task, call use_phone with the complete updated goal. If the reply is a new unrelated request, call use_phone with the new goal instead.")
+                conversation.addUser(
+                    "The phone agent is mid-task working on: \"$goal\". It asked the user: \"$pending\". The user's exact reply follows. If phone control is needed, call use_phone; the app will pass the exact reply through without using your task wording."
                 )
             }
             capturedInitialScreenDump = screenReader()?.takeIf { it.isNotBlank() }
@@ -292,9 +434,15 @@ class AgentManager(
             chatJob = scope.launch {
                 runCatching { routeMessage(chatApiKey = agentApiKey, agentApiKey = agentApiKey, message = message) }
                     .onFailure {
-                        if (it is CancellationException || isPaused) return@onFailure
+                        val evalCancelled = it is CancellationException || isPaused
+                        if (evalCancelled) EvalRecorder.active?.markUserStopped()
+                        EvalRecorder.active?.finalizeIfUnfinished(
+                            if (evalCancelled) "cancelled" else "error", latestScreenshotDataUrl
+                        )
+                        if (evalCancelled) return@onFailure
                         callbacks.onAgentError(it.message)
                     }
+                EvalRecorder.active?.finalizeIfUnfinished("chat_only", latestScreenshotDataUrl)
                 callbacks.onAgentThinkingFinished()
             }
             return
@@ -311,7 +459,50 @@ class AgentManager(
         chatJob = scope.launch {
             runCatching { routeMessage(chatApiKey = agentApiKey, agentApiKey = agentApiKey, message = message) }
                 .onFailure {
-                    if (it is CancellationException || isPaused) return@onFailure
+                    val evalCancelled = it is CancellationException || isPaused
+                    if (evalCancelled) EvalRecorder.active?.markUserStopped()
+                    EvalRecorder.active?.finalizeIfUnfinished(
+                        if (evalCancelled) "cancelled" else "error", latestScreenshotDataUrl
+                    )
+                    if (evalCancelled) return@onFailure
+                    callbacks.onAgentError(it.message)
+                }
+            EvalRecorder.active?.finalizeIfUnfinished("chat_only", latestScreenshotDataUrl)
+            callbacks.onAgentThinkingFinished()
+        }
+    }
+
+    fun runPhoneTaskDirectly(message: String) {
+        val agentApiKey = agentProviderApiKey()
+        if (agentApiKey.isBlank()) {
+            callbacks.onAgentApiKeyMissing()
+            return
+        }
+
+        isPaused = false
+        lastAgentApiKey = agentApiKey
+        chatJob?.cancel()
+        callbacks.onAgentThinkingStarted(message)
+
+        capturedInitialScreenDump = screenReader()?.takeIf { it.isNotBlank() }
+        EvalRecorder.active?.markAgentInvoked()
+        resetAgentState(message)
+        seedInitialScreenDump()
+        latestUserMessage = message
+        // Eval harness path bypasses chat — keep unified history in sync with the user utterance.
+        conversation.addUser(message)
+        appendActionTranscriptGoal(message)
+
+        chatJob = scope.launch {
+            runCatching { runAgentLoop(agentApiKey) }
+                .onFailure {
+                    val evalCancelled = it is CancellationException || isPaused
+                    if (evalCancelled) EvalRecorder.active?.markUserStopped()
+                    EvalRecorder.active?.finalizeIfUnfinished(
+                        if (evalCancelled) "cancelled" else "error",
+                        latestScreenshotDataUrl
+                    )
+                    if (evalCancelled) return@onFailure
                     callbacks.onAgentError(it.message)
                 }
             callbacks.onAgentThinkingFinished()
@@ -342,42 +533,340 @@ class AgentManager(
     // ─── Chat-first routing ─────────────────────────────────────────────────
 
     private suspend fun routeMessage(chatApiKey: String, agentApiKey: String, message: String) {
-        // Add user message to chat history
-        chatHistory.add(JSONObject().put("role", "user").put("content", message))
+        pendingTurnBlocks.clear()
+        conversation.addUser(message)
 
-        val result = callChat(chatApiKey)
-        val content = result.optString("content", "").takeIf { it != "null" }?.trim() ?: ""
-        val toolCalls = result.optJSONArray("tool_calls")
+        for (round in 0 until CHAT_MAX_DIRECT_TOOL_ROUNDS) {
+            val result = callChat(chatApiKey)
+            result.optJSONArray("assistant_content")
+                ?.takeIf { it.length() > 0 }
+                ?.let { pendingTurnBlocks.add(JSONObject().put("role", "assistant").put("content", JSONArray(it.toString()))) }
 
-        // Check if the model wants to use the phone
-        val usePhoneCall = ChatPrompt.findUsePhoneTask(toolCalls)
-        val sharedToolResponse = handleSharedChatTool(toolCalls)
+            val content = result.optString("content", "").takeIf { it != "null" }?.trim() ?: ""
+            val toolCalls = result.optJSONArray("tool_calls")
 
-        if (sharedToolResponse != null && sharedToolResponse.toolName != SharedToolSchemas.TOOL_SEARCH_WEB) {
-            chatHistory.add(JSONObject().put("role", "assistant").put("content", sharedToolResponse.response))
-            callbacks.onAgentResponse(sharedToolResponse.response)
-        } else if (usePhoneCall != null) {
-            val task = usePhoneCall.ifBlank { message }
-            chatHistory.add(JSONObject().put("role", "assistant").put("content", "Let me do that on your phone."))
-            resetAgentState(task)
-            seedInitialScreenDump()
-            latestUserMessage = task
-            appendActionTranscriptGoal(task)
-            runAgentLoop(agentApiKey)
-        } else if (sharedToolResponse != null) {
-            chatHistory.add(JSONObject().put("role", "assistant").put("content", sharedToolResponse.response))
-            callbacks.onAgentResponse(sharedToolResponse.response)
-        } else if (content.isNotBlank()) {
-            chatHistory.add(JSONObject().put("role", "assistant").put("content", content))
-            callbacks.onAgentResponse(sanitizeForTts(content))
+            if (toolCalls != null && toolCalls.length() > 0) {
+                when (val outcome = handleChatToolLoopTurn(toolCalls, fallbackTask = message)) {
+                    is ChatLoopOutcome.Continue -> {
+                        pendingTurnBlocks.add(JSONObject().put("role", "user").put("content", outcome.toolResults))
+                    }
+
+                    is ChatLoopOutcome.FinalResponse -> {
+                        outcome.executedTools.forEach { conversation.addToolCall(it.name, it.argsDisplay, it.resultDisplay) }
+                        conversation.addAssistant(outcome.response)
+                        pendingTurnBlocks.clear()
+                        if (outcome.isAskUser) {
+                            callbacks.onAgentAskUser(outcome.response)
+                        } else {
+                            callbacks.onAgentResponse(outcome.response)
+                        }
+                        return
+                    }
+
+                    is ChatLoopOutcome.HandoffToPhone -> {
+                        outcome.executedTools.forEach { conversation.addToolCall(it.name, it.argsDisplay, it.resultDisplay) }
+                        val task = outcome.task.ifBlank { message }
+                        conversation.addAssistant("Let me do that on your phone.")
+                        pendingTurnBlocks.clear()
+                        EvalRecorder.active?.markAgentInvoked()
+                        resetAgentState(task)
+                        seedInitialScreenDump()
+                        // Goal is the Haiku-resolved task; keep latestUserMessage as the raw user input.
+                        latestUserMessage = message
+                        appendActionTranscriptGoal(task)
+                        runAgentLoop(agentApiKey)
+                        return
+                    }
+                }
+            } else if (content.isNotBlank()) {
+                val responseText = sanitizeForTts(content)
+                conversation.addAssistant(responseText)
+                pendingTurnBlocks.clear()
+                callbacks.onAgentResponse(responseText)
+                return
+            } else {
+                break
+            }
+        }
+
+        pendingTurnBlocks.clear()
+        callbacks.onAgentResponse("I stopped early before finishing. Say try again to continue.")
+    }
+
+    private suspend fun handleChatToolLoopTurn(
+        toolCalls: JSONArray,
+        fallbackTask: String
+    ): ChatLoopOutcome {
+        val toolResults = JSONArray()
+        val executed = mutableListOf<ExecutedChatTool>()
+
+        fun record(toolName: String, rawArgs: String, resultContent: JSONObject) {
+            executed.add(
+                ExecutedChatTool(
+                    name = toolName,
+                    argsDisplay = ConversationHistory.formatToolArgsForDisplay(toolName, rawArgs),
+                    resultDisplay = ConversationHistory.formatToolResultForHistory(toolName, resultContent.toString())
+                )
+            )
+        }
+
+        for (index in 0 until toolCalls.length()) {
+            val toolCall = toolCalls.optJSONObject(index) ?: continue
+            val toolUseId = toolCall.optString("id").ifBlank { "chat_tool_$index" }
+            val function = toolCall.optJSONObject("function") ?: continue
+            val toolName = function.optString("name").trim()
+            val rawArgs = function.optString("arguments", "{}")
+            val arguments = runCatching { JSONObject(rawArgs) }.getOrDefault(JSONObject())
+
+            if (toolName == ChatPrompt.TOOL_OPEN_APP) {
+                val result = executeChatOpenApp(arguments)
+                result.uiAction?.let(callbacks::onAgentUiAction)
+                toolResults.put(
+                    ChatToolLoopSupport.toolResultBlock(
+                        toolUseId = toolUseId,
+                        resultContent = result.resultContent,
+                        isError = !result.resultContent.optBoolean("ok", false)
+                    )
+                )
+                record(toolName, rawArgs, result.resultContent)
+                if (!result.resultContent.optBoolean("ok", false)) {
+                    ChatToolLoopSupport.appendSkippedToolResults(
+                        toolCalls = toolCalls,
+                        startIndex = index + 1,
+                        toolResults = toolResults,
+                        reason = "Skipped because an earlier tool call in this response already failed."
+                    )
+                    return ChatLoopOutcome.Continue(toolResults, executed)
+                }
+                continue
+            }
+
+            if (toolName == ChatPrompt.TOOL_OPEN_NOTIFICATIONS) {
+                val result = executeChatOpenNotifications()
+                result.uiAction?.let(callbacks::onAgentUiAction)
+                toolResults.put(
+                    ChatToolLoopSupport.toolResultBlock(
+                        toolUseId = toolUseId,
+                        resultContent = result.resultContent,
+                        isError = !result.resultContent.optBoolean("ok", false)
+                    )
+                )
+                record(toolName, rawArgs, result.resultContent)
+                if (!result.resultContent.optBoolean("ok", false)) {
+                    ChatToolLoopSupport.appendSkippedToolResults(
+                        toolCalls = toolCalls,
+                        startIndex = index + 1,
+                        toolResults = toolResults,
+                        reason = "Skipped because an earlier tool call in this response already failed."
+                    )
+                    return ChatLoopOutcome.Continue(toolResults, executed)
+                }
+                continue
+            }
+
+            if (toolName == ChatPrompt.TOOL_ASK_USER) {
+                callbacks.onToolCalled(toolName)
+                val question = arguments.optString("question").trim()
+                val normalized = AgentToolExecutorSupport.normalizeQuickQuestion(question)
+                val resultContent = JSONObject()
+                    .put("tool", ChatPrompt.TOOL_ASK_USER)
+                    .put("ok", true)
+                    .put("question", normalized)
+                toolResults.put(
+                    ChatToolLoopSupport.toolResultBlock(
+                        toolUseId = toolUseId,
+                        resultContent = resultContent,
+                        isError = false
+                    )
+                )
+                record(toolName, rawArgs, resultContent)
+                ChatToolLoopSupport.appendSkippedToolResults(
+                    toolCalls = toolCalls,
+                    startIndex = index + 1,
+                    toolResults = toolResults,
+                    reason = "Skipped because ask_user already needs a reply."
+                )
+                return ChatLoopOutcome.FinalResponse(
+                    response = sanitizeForTts(normalized),
+                    isAskUser = true,
+                    toolResults = toolResults,
+                    executedTools = executed
+                )
+            }
+
+            if (toolName == ChatPrompt.TOOL_USE_PHONE) {
+                callbacks.onToolCalled(toolName)
+                val resolvedGoal = arguments.optString("goal").trim().ifBlank { fallbackTask }
+                val resultContent = JSONObject()
+                    .put("tool", ChatPrompt.TOOL_USE_PHONE)
+                    .put("ok", true)
+                    .put("goal", resolvedGoal)
+                    .put("handoff", true)
+                toolResults.put(
+                    ChatToolLoopSupport.toolResultBlock(
+                        toolUseId = toolUseId,
+                        resultContent = resultContent,
+                        isError = false
+                    )
+                )
+                record(toolName, rawArgs, resultContent)
+                ChatToolLoopSupport.appendSkippedToolResults(
+                    toolCalls = toolCalls,
+                    startIndex = index + 1,
+                    toolResults = toolResults,
+                    reason = "Skipped because use_phone is handling the request."
+                )
+                return ChatLoopOutcome.HandoffToPhone(resolvedGoal, toolResults, executed)
+            }
+
+            if (toolName in DIRECT_CHAT_SHARED_TOOLS) {
+                callbacks.onToolCalled(toolName)
+                val execution = sharedToolExecutor.execute(toolName, arguments)
+                if (execution == null) {
+                    val errorContent = ChatToolLoopSupport.errorResultContent(
+                        toolName = toolName,
+                        error = "Unknown shared tool: $toolName"
+                    )
+                    toolResults.put(
+                        ChatToolLoopSupport.toolResultBlock(
+                            toolUseId = toolUseId,
+                            resultContent = errorContent,
+                            isError = true
+                        )
+                    )
+                    record(toolName, rawArgs, errorContent)
+                    ChatToolLoopSupport.appendSkippedToolResults(
+                        toolCalls = toolCalls,
+                        startIndex = index + 1,
+                        toolResults = toolResults,
+                        reason = "Skipped because an earlier tool call in this response already failed."
+                    )
+                    return ChatLoopOutcome.Continue(toolResults, executed)
+                }
+                execution.uiAction?.let(callbacks::onAgentUiAction)
+                toolResults.put(
+                    ChatToolLoopSupport.toolResultBlock(
+                        toolUseId = toolUseId,
+                        resultContent = execution.content,
+                        isError = !execution.content.optBoolean("ok", false)
+                    )
+                )
+                record(toolName, rawArgs, execution.content)
+                if (!execution.content.optBoolean("ok", false)) {
+                    ChatToolLoopSupport.appendSkippedToolResults(
+                        toolCalls = toolCalls,
+                        startIndex = index + 1,
+                        toolResults = toolResults,
+                        reason = "Skipped because an earlier tool call in this response already failed."
+                    )
+                    return ChatLoopOutcome.Continue(toolResults, executed)
+                }
+                continue
+            }
+
+            val errorContent = ChatToolLoopSupport.errorResultContent(
+                toolName = toolName.ifBlank { "unknown_tool" },
+                error = "Unsupported chat tool: ${toolName.ifBlank { "unknown_tool" }}"
+            )
+            toolResults.put(
+                ChatToolLoopSupport.toolResultBlock(
+                    toolUseId = toolUseId,
+                    resultContent = errorContent,
+                    isError = true
+                )
+            )
+            record(toolName.ifBlank { "unknown_tool" }, rawArgs, errorContent)
+            ChatToolLoopSupport.appendSkippedToolResults(
+                toolCalls = toolCalls,
+                startIndex = index + 1,
+                toolResults = toolResults,
+                reason = "Skipped because an earlier tool call in this response already failed."
+            )
+            return ChatLoopOutcome.Continue(toolResults, executed)
+        }
+
+        return if (toolResults.length() > 0) {
+            ChatLoopOutcome.Continue(toolResults, executed)
+        } else {
+            ChatLoopOutcome.FinalResponse("I couldn't complete that request.", executedTools = executed)
         }
     }
 
-    private suspend fun handleSharedChatTool(toolCalls: JSONArray?): SharedChatToolResult? {
-        val execution = sharedToolExecutor.executeFirstMatching(toolCalls) ?: return null
+    private fun executeChatOpenApp(arguments: JSONObject): SharedChatToolResult {
+        callbacks.onToolCalled(ChatPrompt.TOOL_OPEN_APP)
+        val appName = arguments.optString("name").trim().lowercase()
+        if (appName.isBlank()) {
+            return SharedChatToolResult(
+                toolName = ChatPrompt.TOOL_OPEN_APP,
+                response = "I need the app name first.",
+                resultContent = JSONObject()
+                    .put("tool", ChatPrompt.TOOL_OPEN_APP)
+                    .put("ok", false)
+                    .put("error", "Missing app name.")
+            )
+        }
+
+        val result = openAppForChat(appName)
+        val response = when {
+            result.opened && result.alreadyOpen -> "${result.label ?: appName} is already open."
+            result.opened -> "Opened ${result.label ?: appName}."
+            else -> result.error ?: "I could not open $appName."
+        }
         return SharedChatToolResult(
-            toolName = execution.toolName,
-            response = sanitizeForTts(execution.chatResponse)
+            toolName = ChatPrompt.TOOL_OPEN_APP,
+            response = sanitizeForTts(response),
+            resultContent = JSONObject()
+                .put("tool", ChatPrompt.TOOL_OPEN_APP)
+                .put("ok", result.opened)
+                .put("opened", result.opened)
+                .put("already_open", result.alreadyOpen)
+                .put("app_name", appName)
+                .apply {
+                    result.packageName?.let { put("package_name", it) }
+                    result.label?.let { put("resolved_label", it) }
+                    result.error?.let { put("error", it) }
+                }
+        )
+    }
+
+    private fun executeChatOpenNotifications(): SharedChatToolResult {
+        callbacks.onToolCalled(ChatPrompt.TOOL_OPEN_NOTIFICATIONS)
+        val result = openNotificationsForChat()
+        val response = when {
+            result.pressed -> "Opened notifications."
+            else -> result.error ?: "I could not open notifications."
+        }
+        return SharedChatToolResult(
+            toolName = ChatPrompt.TOOL_OPEN_NOTIFICATIONS,
+            response = sanitizeForTts(response),
+            resultContent = JSONObject()
+                .put("tool", ChatPrompt.TOOL_OPEN_NOTIFICATIONS)
+                .put("ok", result.pressed)
+                .put("opened", result.pressed)
+                .apply {
+                    result.error?.let { put("error", it) }
+                }
+        )
+    }
+
+    private fun openAppForChat(appName: String): AppOpenResult {
+        return AssistantAccessibilityService.instance?.let { service ->
+            AppOpener.openApp(service, appName)
+        } ?: AppOpenResult(
+            opened = false,
+            error = "Accessibility service is not connected."
+        )
+    }
+
+    private fun openNotificationsForChat(): PressHomeResult {
+        return AssistantAccessibilityService.instance?.let { service ->
+            val pressed = service.performGlobalAction(
+                android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS
+            )
+            PressHomeResult(pressed = pressed)
+        } ?: PressHomeResult(
+            pressed = false,
+            error = "Accessibility service is not connected."
         )
     }
 
@@ -388,7 +877,7 @@ class AgentManager(
         latestScreenshotRevision = null
         agentState = emptyAgentState(currentGoal = currentGoal)
         toolCallLog.clear()
-        actionTranscript.clear()
+        evalTranscript.clear()
         lastUiChange = "new_user_request"
         lastSuccessfulToolName = null
         lastTappedNodeRef = null
@@ -404,24 +893,28 @@ class AgentManager(
         agentState = agentState.copy(lastTree = ScreenReader.fingerprintsForDump(dump))
     }
 
-    private fun agentProviderApiKey(): String {
-        return when (AgentModelConfig.ACTIVE.provider) {
-            ModelProvider.OPENAI -> BuildConfig.OPENAI_API_KEY.trim()
-            ModelProvider.ANTHROPIC -> ApiKeyStore.getAnthropicKey(appContext)
+    private fun agentProviderApiKey(): String = BuildConfig.ANTHROPIC_API_KEY.trim()
+
+    private suspend fun callChat(apiKey: String): JSONObject {
+        return try {
+            callAnthropicChat(apiKey)
+        } catch (anthropicError: Exception) {
+            val result = callOpenAiChatFallback(anthropicError)
+            callbacks.onAgentFallbackToOpenAi()
+            result
         }
     }
 
-    private suspend fun callChat(apiKey: String): JSONObject = withContext(Dispatchers.IO) {
-        val messages = JSONArray()
-        for (msg in chatHistory) {
-            messages.put(msg)
-        }
-
+    private suspend fun callAnthropicChat(apiKey: String): JSONObject = withContext(Dispatchers.IO) {
+        activeSearchContext = SearchExecutionContext(
+            provider = SearchProvider.ANTHROPIC,
+            model = ChatPrompt.MODEL
+        )
         val requestPayload = JSONObject()
             .put("model", ChatPrompt.MODEL)
             .put("max_tokens", CHAT_MAX_TOKENS)
             .put("system", ChatPrompt.instructions())
-            .put("messages", messages)
+            .put("messages", buildAnthropicChatMessages())
             .put("tools", ChatPrompt.buildAnthropicTools())
 
         val body = requestPayload
@@ -438,173 +931,203 @@ class AgentManager(
         chatClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 val responseBody = response.body?.string().orEmpty()
-                throw IllegalStateException("HTTP ${response.code}: $responseBody")
+                throw IllegalStateException(
+                    AgentApiSupport.formatAgentApiError(
+                        providerLabel = "anthropic",
+                        model = ChatPrompt.MODEL,
+                        statusCode = response.code,
+                        responseBody = responseBody,
+                        maxBodyChars = MAX_AGENT_ERROR_BODY_CHARS
+                    )
+                )
             }
             val responseJson = JSONObject(response.body?.string().orEmpty())
-            parseAnthropicChatResult(responseJson)
+            AgentApiSupport.parseAnthropicChatResult(responseJson)
         }
     }
 
-    private fun parseAnthropicChatResult(responseJson: JSONObject): JSONObject {
-        val content = responseJson.optJSONArray("content") ?: JSONArray()
-        val textParts = StringBuilder()
-        val toolCalls = JSONArray()
+    private suspend fun callOpenAiChatFallback(anthropicError: Exception): JSONObject = withContext(Dispatchers.IO) {
+        val openAiApiKey = BuildConfig.OPENAI_API_KEY.trim()
+        if (openAiApiKey.isBlank()) throw anthropicError
 
-        for (i in 0 until content.length()) {
-            val block = content.optJSONObject(i) ?: continue
-            when (block.optString("type")) {
-                "text" -> textParts.append(block.optString("text"))
-                "tool_use" -> {
-                    val inputObj = block.optJSONObject("input") ?: JSONObject()
-                    toolCalls.put(
-                        JSONObject()
-                            .put("id", block.optString("id"))
-                            .put("type", "function")
-                            .put(
-                                "function",
-                                JSONObject()
-                                    .put("name", block.optString("name"))
-                                    .put("arguments", inputObj.toString())
-                            )
+        val fallbackModel = AgentModelConfig.openAiFallbackModelFor(ChatPrompt.MODEL)
+        activeSearchContext = SearchExecutionContext(
+            provider = SearchProvider.OPENAI,
+            model = fallbackModel
+        )
+        val requestPayload = JSONObject()
+            .put("model", fallbackModel)
+            .put("max_completion_tokens", CHAT_MAX_TOKENS)
+            .put("messages", buildOpenAiChatMessages())
+            .put("tools", buildOpenAiChatTools())
+            .put("tool_choice", "auto")
+
+        val body = requestPayload
+            .toString()
+            .toRequestBody("application/json".toMediaType())
+
+        val request = Request.Builder()
+            .url(OPENAI_CHAT_COMPLETIONS_ENDPOINT)
+            .addHeader("Authorization", "Bearer $openAiApiKey")
+            .post(body)
+            .build()
+
+        chatClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val responseBody = response.body?.string().orEmpty()
+                val fallbackError = IllegalStateException(
+                    AgentApiSupport.formatAgentApiError(
+                        providerLabel = "openai",
+                        model = fallbackModel,
+                        statusCode = response.code,
+                        responseBody = responseBody,
+                        maxBodyChars = MAX_AGENT_ERROR_BODY_CHARS
                     )
-                }
+                )
+                fallbackError.addSuppressed(anthropicError)
+                throw fallbackError
             }
-        }
-
-        val result = JSONObject()
-            .put("role", "assistant")
-            .put("content", textParts.toString().trim().ifBlank { JSONObject.NULL })
-        if (toolCalls.length() > 0) {
-            result.put("tool_calls", toolCalls)
-        }
-        return result
-    }
-
-    /** Parse the Responses API result into a JSONObject with content + tool_calls. */
-    private fun parseResponsesApiResult(responseJson: JSONObject): JSONObject {
-        val output = responseJson.optJSONArray("output") ?: JSONArray()
-        val textParts = StringBuilder()
-        val toolCalls = JSONArray()
-
-        for (i in 0 until output.length()) {
-            val item = output.optJSONObject(i) ?: continue
-            val type = item.optString("type")
-
-            when (type) {
-                "message" -> {
-                    val content = item.optJSONArray("content") ?: continue
-                    for (j in 0 until content.length()) {
-                        val part = content.optJSONObject(j) ?: continue
-                        if (part.optString("type") == "output_text") {
-                            textParts.append(part.optString("text"))
-                        }
-                    }
-                }
-                "function_call" -> {
-                    toolCalls.put(
-                        JSONObject()
-                            .put("id", item.optString("id"))
-                            .put("type", "function")
-                            .put("function", JSONObject()
-                                .put("name", item.optString("name"))
-                                .put("arguments", item.optString("arguments"))
-                            )
-                    )
-                }
-            }
-        }
-
-        // Strip web_search_preview citation markers like 【4:0†source】
-        val cleanText = textParts.toString()
-            .replace(Regex("""\u3010[^】]*\u3011"""), "")
-            .replace(Regex("""\s{2,}"""), " ")
-            .trim()
-
-        val result = JSONObject()
-            .put("role", "assistant")
-            .put("content", cleanText.ifBlank { JSONObject.NULL })
-
-        if (toolCalls.length() > 0) {
-            result.put("tool_calls", toolCalls)
-        }
-
-        return result
-    }
-
-    private fun parseAnthropicMessagesApiResult(responseJson: JSONObject): JSONObject {
-        val content = responseJson.optJSONArray("content") ?: JSONArray()
-        val textParts = StringBuilder()
-        for (i in 0 until content.length()) {
-            val part = content.optJSONObject(i) ?: continue
-            if (part.optString("type") == "text") {
-                textParts.append(part.optString("text"))
-            }
-        }
-
-        return JSONObject()
-            .put("role", "assistant")
-            .put("content", textParts.toString().trim().ifBlank { JSONObject.NULL })
-    }
-
-    private fun formatAgentApiError(
-        provider: ModelProvider,
-        model: String,
-        statusCode: Int,
-        responseBody: String
-    ): String {
-        val parsed = runCatching { JSONObject(responseBody) }.getOrNull()
-        val providerLabel = provider.name.lowercase()
-        val requestId = parsed?.optString("request_id").orEmpty().ifBlank { null }
-        val apiMessage = parsed?.optJSONObject("error")?.optString("message").orEmpty().ifBlank { null }
-        val rawBody = compactApiErrorBody(responseBody)
-
-        return buildString {
-            append("Agent API error")
-            append(" provider=")
-            append(providerLabel)
-            append(" model=")
-            append(model)
-            append(" http=")
-            append(statusCode)
-            requestId?.let {
-                append(" request_id=")
-                append(it)
-            }
-            apiMessage?.let {
-                append(" message=")
-                append(it)
-            }
-            if (apiMessage == null && rawBody.isNotBlank()) {
-                append(" body=")
-                append(rawBody)
-            }
+            val responseJson = JSONObject(response.body?.string().orEmpty())
+            AgentApiSupport.parseOpenAiChatCompletionResult(responseJson)
         }
     }
 
-    private fun compactApiErrorBody(responseBody: String): String {
-        return responseBody
-            .replace(Regex("""\s+"""), " ")
-            .trim()
-            .take(MAX_AGENT_ERROR_BODY_CHARS)
+    /**
+     * Anthropic requires the first message to be from the user and roles to
+     * strictly alternate, so coalesce consecutive same-role history entries
+     * and drop a leading assistant turn.
+     */
+    private fun buildAnthropicChatMessages(): JSONArray {
+        val messages = conversation.toAnthropicChatMessages()
+        for (block in pendingTurnBlocks) {
+            messages.put(block)
+        }
+        return messages
+    }
+
+    private fun buildOpenAiChatMessages(): JSONArray {
+        // OpenAI fallback: uses only the persistent conversation. Mid-turn tool round-trip
+        // blocks (Anthropic-shaped) are not translated; fallback firing mid-loop is rare and
+        // the next turn resumes with full continuity.
+        return conversation.toOpenAiChatMessages(ChatPrompt.instructions())
+    }
+
+    private fun buildOpenAiChatTools(): JSONArray {
+        val tools = ChatPrompt.buildTools()
+        return JSONArray().also { out ->
+            for (i in 0 until tools.length()) {
+                val tool = tools.optJSONObject(i) ?: continue
+                if (tool.optString("type") != "function") continue
+                out.put(
+                    JSONObject()
+                        .put("type", "function")
+                        .put(
+                            "function",
+                            JSONObject()
+                                .put("name", tool.optString("name"))
+                                .put("description", tool.optString("description"))
+                                .put("parameters", tool.optJSONObject("parameters") ?: JSONObject())
+                        )
+                )
+            }
+        }
     }
 
     private fun performWebSearch(query: String): SearchWebResult {
-        val apiKey = lastOpenAiApiKey ?: BuildConfig.OPENAI_API_KEY.trim()
-        if (apiKey.isNullOrBlank()) {
+        val context = activeSearchContext
+        return when (context.provider) {
+            SearchProvider.ANTHROPIC -> performAnthropicWebSearch(query, context.model)
+            SearchProvider.OPENAI -> performOpenAiWebSearch(query, context.model)
+        }
+    }
+
+    private fun performAnthropicWebSearch(query: String, model: String): SearchWebResult {
+        val apiKey = BuildConfig.ANTHROPIC_API_KEY.trim()
+        if (apiKey.isBlank()) {
             return SearchWebResult(ok = false, error = "API key not available.")
         }
 
         return try {
             val requestPayload = JSONObject()
-                .put("model", ChatPrompt.MODEL)
-                .put("input", query)
-                .put("tools", JSONArray().put(JSONObject().put("type", "web_search_preview")))
+                .put("model", model)
+                .put("max_tokens", WEB_SEARCH_MAX_TOKENS)
+                .put(
+                    "messages",
+                    JSONArray().put(
+                        JSONObject()
+                            .put("role", "user")
+                            .put("content", query)
+                    )
+                )
+                .put(
+                    "tools",
+                    JSONArray().put(
+                        JSONObject()
+                            .put("type", "web_search_20250305")
+                            .put("name", "web_search")
+                            .put("max_uses", WEB_SEARCH_MAX_USES)
+                    )
+                )
 
             val body = requestPayload.toString()
                 .toRequestBody("application/json".toMediaType())
 
-            val request = okhttp3.Request.Builder()
-                .url(OPENAI_RESPONSES_ENDPOINT)
+            val request = Request.Builder()
+                .url(ANTHROPIC_MESSAGES_ENDPOINT)
+                .addHeader("x-api-key", apiKey)
+                .addHeader("anthropic-version", ANTHROPIC_VERSION)
+                .post(body)
+                .build()
+
+            chatClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    val responseBody = response.body?.string().orEmpty()
+                    SearchWebResult(ok = false, error = "HTTP ${response.code}: $responseBody")
+                } else {
+                    val responseJson = JSONObject(response.body?.string().orEmpty())
+                    val content = responseJson.optJSONArray("content") ?: JSONArray()
+                    val textParts = StringBuilder()
+                    for (i in 0 until content.length()) {
+                        val part = content.optJSONObject(i) ?: continue
+                        if (part.optString("type") == "text") {
+                            textParts.append(part.optString("text"))
+                        }
+                    }
+                    val answer = AgentApiSupport.stripCitationMarkers(textParts.toString())
+                    SearchWebResult(ok = true, answer = answer.ifBlank { null })
+                }
+            }
+        } catch (e: Exception) {
+            SearchWebResult(ok = false, error = e.message ?: "Search failed.")
+        }
+    }
+
+    private fun performOpenAiWebSearch(query: String, model: String): SearchWebResult {
+        val apiKey = BuildConfig.OPENAI_API_KEY.trim()
+        if (apiKey.isBlank()) {
+            return SearchWebResult(ok = false, error = "API key not available.")
+        }
+
+        val searchModel = AgentModelConfig.openAiWebSearchModelFor(model)
+
+        return try {
+            val requestPayload = JSONObject()
+                .put("model", searchModel)
+                .put(
+                    "messages",
+                    JSONArray().put(
+                        JSONObject()
+                            .put("role", "user")
+                            .put("content", query)
+                    )
+                )
+                .put("web_search_options", JSONObject())
+
+            val body = requestPayload.toString()
+                .toRequestBody("application/json".toMediaType())
+
+            val request = Request.Builder()
+                .url(OPENAI_CHAT_COMPLETIONS_ENDPOINT)
                 .addHeader("Authorization", "Bearer $apiKey")
                 .post(body)
                 .build()
@@ -615,22 +1138,13 @@ class AgentManager(
                     SearchWebResult(ok = false, error = "HTTP ${response.code}: $responseBody")
                 } else {
                     val responseJson = JSONObject(response.body?.string().orEmpty())
-                    val output = responseJson.optJSONArray("output") ?: JSONArray()
-                    val textParts = StringBuilder()
-                    for (i in 0 until output.length()) {
-                        val item = output.optJSONObject(i) ?: continue
-                        if (item.optString("type") == "message") {
-                            val content = item.optJSONArray("content") ?: continue
-                            for (j in 0 until content.length()) {
-                                val part = content.optJSONObject(j) ?: continue
-                                if (part.optString("type") == "output_text") {
-                                    textParts.append(part.optString("text"))
-                                }
-                            }
-                        }
-                    }
-                    val answer = AgentApiSupport.stripCitationMarkers(textParts.toString())
-                    SearchWebResult(ok = true, answer = answer.ifBlank { null })
+                    val answer = AgentApiSupport.parseOpenAiChatCompletionText(responseJson)
+                        .optString("content")
+                        .trim()
+                    SearchWebResult(
+                        ok = true,
+                        answer = AgentApiSupport.stripCitationMarkers(answer).ifBlank { null }
+                    )
                 }
             }
         } catch (e: Exception) {
@@ -645,12 +1159,16 @@ class AgentManager(
         agentState = agentState.copy(currentGoal = currentGoal)
         var hasUserFacingOutput = false
 
-        if (actionTranscript.isEmpty() && currentGoal.isNotBlank()) {
+        if (evalTranscript.isEmpty() && currentGoal.isNotBlank()) {
             appendActionTranscriptGoal(currentGoal)
         }
 
+        var evalStopReason = "max_steps"
+        var emptyActionRetries = 0
+
         for (step in 0 until AgentTooling.MAX_AGENT_STEPS) {
-            val assistantMessage = callAgentModel(apiKey)
+            EvalRecorder.active?.beginStep(step)
+            val assistantMessage = callAnthropicAgent(apiKey)
 
             val rawContent = assistantMessage.optString("content", "")
                 .takeIf { it != "null" }?.trim() ?: ""
@@ -665,19 +1183,31 @@ class AgentManager(
                 agentState = agentState.copy(nextSteps = structuredResponse.nextSteps)
             }
 
-            // Show thinking to the user
+            // Surface reasoning to the user (text bubble in the chat card, not TTS) and
+            // persist it into the unified conversation so the agent can recall its own
+            // prior-step thinking on the next turn.
             val thinking = structuredResponse.thinking
             if (thinking.isNotBlank()) {
-                callbacks.onAgentResponse(thinking)
-                appendActionTranscriptAssistantMessage(thinking)
-                hasUserFacingOutput = true
+                EvalRecorder.active?.recordStepThinking(thinking)
+                callbacks.onAgentReasoning(thinking)
+                conversation.addReasoning(thinking)
             }
 
-            // If no actions specified, stop the loop
+            // Every response MUST end in a tool call. If the model returned no actions,
+            // inject a corrective system note and retry. Cap retries so we cannot loop.
             val actions = structuredResponse.actions
             if (actions.isEmpty()) {
-                break
+                if (emptyActionRetries >= EMPTY_ACTION_RETRY_CAP) {
+                    evalStopReason = "empty_actions"
+                    break
+                }
+                emptyActionRetries++
+                conversation.addUser(
+                    "System note: your last response had no actions. Every response MUST include at least one action. To finish call task_complete; to ask the user call ask_user. Continue now with at least one action."
+                )
+                continue
             }
+            emptyActionRetries = 0
 
             var shouldStopLoop = false
             for ((actionIdx, action) in actions.withIndex()) {
@@ -695,10 +1225,25 @@ class AgentManager(
                         .put("arguments", rawArgs)
                     )
 
+                callbacks.onToolCalled(canonName)
                 val result = toolExecutor.executeToolCall(toolCall)
                 val resultContent = JSONObject(result.toolMessage.optString("content", "{}"))
                 recordToolOutcome(toolName = canonName, rawArgs = rawArgs, content = resultContent)
+                EvalRecorder.active?.let { rec ->
+                    val last = toolCallLog.lastOrNull()
+                    if (last != null) {
+                        rec.recordToolCall(step, last.name, last.status, rawArgs, last.details)
+                        if (last.status != "success") {
+                            rec.captureScreenshot(step, "error", latestScreenshotDataUrl)
+                        }
+                    }
+                }
                 appendActionTranscriptToolResult(canonName, rawArgs, resultContent)
+                conversation.addToolCall(
+                    canonName,
+                    ConversationHistory.formatToolArgsForDisplay(canonName, rawArgs),
+                    ConversationHistory.formatToolResultForHistory(canonName, resultContent.toString())
+                )
                 hasUserFacingOutput = hasUserFacingOutput || result.hasUserFacingOutput
 
                 agentState = when (canonName) {
@@ -719,6 +1264,14 @@ class AgentManager(
                 }
 
                 if (result.shouldStopLoop) {
+                    evalStopReason = when (canonName) {
+                        AgentTooling.TOOL_TASK_COMPLETE -> "task_complete"
+                        AgentTooling.TOOL_ASK_USER -> {
+                            EvalRecorder.active?.markUserIntervened("ask_user")
+                            "ask_user"
+                        }
+                        else -> "tool_stop"
+                    }
                     shouldStopLoop = true
                     break
                 }
@@ -727,6 +1280,7 @@ class AgentManager(
                 if (isHardLoopDetected()) {
                     callbacks.onAgentResponse("I got stuck in a loop and stopped. Try rephrasing your request or doing part of the task manually first.")
                     hasUserFacingOutput = true
+                    evalStopReason = "hard_loop"
                     shouldStopLoop = true
                     break
                 }
@@ -746,6 +1300,8 @@ class AgentManager(
                 val question = "quick question, I've used all my steps — shall I keep going?"
                 callbacks.onAgentAskUser(question)
                 appendActionTranscriptAssistantMessage(question)
+                conversation.addAssistant(question)
+                EvalRecorder.active?.markUserIntervened("ask_user")
                 agentState = agentState.copy(
                     needsUserInput = true,
                     pendingQuestion = question
@@ -754,6 +1310,15 @@ class AgentManager(
             }
 
         }
+
+        EvalRecorder.active?.finalize(
+            stopReason = evalStopReason,
+            taskCompleteFired = (evalStopReason == "task_complete"),
+            hardLoopDetected = isHardLoopDetected(),
+            maxConsecutiveSameToolCount = consecutiveSameToolCount,
+            transcript = evalTranscript.toList(),
+            finalScreenshotDataUrl = latestScreenshotDataUrl
+        )
 
         if (!hasUserFacingOutput) {
             callbacks.onAgentResponse("I stopped early before finishing. Say \"try again\" to continue.")
@@ -764,103 +1329,27 @@ class AgentManager(
         chatJob = scope.launch {
             runCatching { runAgentLoop(apiKey) }
                 .onFailure {
-                    if (it is CancellationException || isPaused) return@onFailure
+                    val evalCancelled = it is CancellationException || isPaused
+                    if (evalCancelled) EvalRecorder.active?.markUserStopped()
+                    EvalRecorder.active?.finalizeIfUnfinished(
+                        if (evalCancelled) "cancelled" else "error", latestScreenshotDataUrl
+                    )
+                    if (evalCancelled) return@onFailure
                     callbacks.onAgentError(
-                        it.message ?: "Agent failed (${AgentModelConfig.ACTIVE.provider.name.lowercase()}/${AgentModelConfig.ACTIVE.model})"
+                        it.message ?: "Agent failed (anthropic/${AgentModelConfig.AGENT_MODEL})"
                     )
                 }
             callbacks.onAgentThinkingFinished()
         }
     }
 
-    private suspend fun callAgentModel(apiKey: String): JSONObject {
-        return when (AgentModelConfig.ACTIVE.provider) {
-            ModelProvider.OPENAI -> callOpenAiAgent(apiKey)
-            ModelProvider.ANTHROPIC -> callAnthropicAgent(apiKey)
-        }
-    }
-
-    private suspend fun callOpenAiAgent(apiKey: String): JSONObject = withContext(Dispatchers.IO) {
-        val input = JSONArray()
-
-        // Initial user message with context
-        input.put(
-            JSONObject()
-                .put("role", "user")
-                .put("content", buildAgentContextMessage())
-        )
-
-        buildActionTranscriptMessage()?.let { historyMessage ->
-            input.put(
-                JSONObject()
-                    .put("role", "user")
-                    .put("content", historyMessage)
-            )
-        }
-
-        // Current screen state as a fresh user message (only the latest tree/screenshot)
-        buildAccessibilityTreeMessage()?.let { treeMessage ->
-            input.put(
-                JSONObject()
-                    .put("role", "user")
-                    .put("content", treeMessage)
-            )
-        }
-
-        buildScreenshotMessage()?.let { screenshotMessage ->
-            input.put(screenshotMessage)
-        }
-
-        val requestPayload = JSONObject()
-            .put("model", AgentModelConfig.ACTIVE.model)
-            .put("instructions", AgentTooling.systemPrompt(agentState.currentGoal.ifBlank { latestUserMessage }))
-            .put("input", input)
-            .put("text", JSONObject().put("format", JSONObject().put("type", "json_object")))
-            .put("reasoning", JSONObject().put("effort", AGENT_REASONING_EFFORT))
-        val body = requestPayload
-            .toString()
-            .toRequestBody("application/json".toMediaType())
-
-        val request = Request.Builder()
-            .url(OPENAI_RESPONSES_ENDPOINT)
-            .addHeader("Authorization", "Bearer $apiKey")
-            .post(body)
-            .build()
-
-        val maxRetries = 2
-        var lastException: Exception? = null
-        for (attempt in 0..maxRetries) {
-            try {
-                return@withContext chatClient.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        val responseBody = response.body?.string().orEmpty()
-                        throw IllegalStateException(
-                            AgentApiSupport.formatAgentApiError(
-                                provider = ModelProvider.OPENAI,
-                                model = AgentModelConfig.ACTIVE.model,
-                                statusCode = response.code,
-                                responseBody = responseBody,
-                                maxBodyChars = MAX_AGENT_ERROR_BODY_CHARS
-                            )
-                        )
-                    }
-                    val responseJson = JSONObject(response.body?.string().orEmpty())
-                    AgentApiSupport.parseResponsesApiResult(responseJson)
-                }
-            } catch (e: Exception) {
-                lastException = e
-                if (attempt < maxRetries) {
-                    val backoffMs = 1000L * (1 shl attempt)
-                    delay(backoffMs)
-                }
-            }
-        }
-        throw lastException!!
-    }
-
     private suspend fun callAnthropicAgent(apiKey: String): JSONObject = withContext(Dispatchers.IO) {
+        activeSearchContext = SearchExecutionContext(
+            provider = SearchProvider.ANTHROPIC,
+            model = AgentModelConfig.AGENT_MODEL
+        )
         val requestPayload = JSONObject()
-            .put("model", AgentModelConfig.ACTIVE.model)
+            .put("model", AgentModelConfig.AGENT_MODEL)
             .put("max_tokens", ANTHROPIC_AGENT_MAX_TOKENS)
             .put("system", AgentTooling.systemPrompt(agentState.currentGoal.ifBlank { latestUserMessage }))
             .put("messages", buildAnthropicAgentMessages())
@@ -885,8 +1374,8 @@ class AgentManager(
                         val responseBody = response.body?.string().orEmpty()
                         throw IllegalStateException(
                             AgentApiSupport.formatAgentApiError(
-                                provider = ModelProvider.ANTHROPIC,
-                                model = AgentModelConfig.ACTIVE.model,
+                                providerLabel = "anthropic",
+                                model = AgentModelConfig.AGENT_MODEL,
                                 statusCode = response.code,
                                 responseBody = responseBody,
                                 maxBodyChars = MAX_AGENT_ERROR_BODY_CHARS
@@ -904,7 +1393,53 @@ class AgentManager(
                 }
             }
         }
-        throw lastException!!
+        return@withContext callOpenAiAgentFallback(lastException!!)
+    }
+
+    private suspend fun callOpenAiAgentFallback(anthropicError: Exception): JSONObject = withContext(Dispatchers.IO) {
+        val openAiApiKey = BuildConfig.OPENAI_API_KEY.trim()
+        if (openAiApiKey.isBlank()) throw anthropicError
+
+        val fallbackModel = AgentModelConfig.openAiFallbackModelFor(AgentModelConfig.AGENT_MODEL)
+        activeSearchContext = SearchExecutionContext(
+            provider = SearchProvider.OPENAI,
+            model = fallbackModel
+        )
+        val requestPayload = JSONObject()
+            .put("model", fallbackModel)
+            .put("max_completion_tokens", ANTHROPIC_AGENT_MAX_TOKENS)
+            .put("messages", buildOpenAiAgentMessages())
+            .put("reasoning_effort", AgentModelConfig.OPENAI_AGENT_REASONING_EFFORT)
+            .put("response_format", JSONObject().put("type", "json_object"))
+
+        val body = requestPayload
+            .toString()
+            .toRequestBody("application/json".toMediaType())
+
+        val request = Request.Builder()
+            .url(OPENAI_CHAT_COMPLETIONS_ENDPOINT)
+            .addHeader("Authorization", "Bearer $openAiApiKey")
+            .post(body)
+            .build()
+
+        chatClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val responseBody = response.body?.string().orEmpty()
+                val fallbackError = IllegalStateException(
+                    AgentApiSupport.formatAgentApiError(
+                        providerLabel = "openai",
+                        model = fallbackModel,
+                        statusCode = response.code,
+                        responseBody = responseBody,
+                        maxBodyChars = MAX_AGENT_ERROR_BODY_CHARS
+                    )
+                )
+                fallbackError.addSuppressed(anthropicError)
+                throw fallbackError
+            }
+            val responseJson = JSONObject(response.body?.string().orEmpty())
+            AgentApiSupport.parseOpenAiChatCompletionText(responseJson)
+        }
     }
 
     private fun buildAgentContextMessage(): String {
@@ -923,6 +1458,7 @@ class AgentManager(
             appendLine("## Prompt Context")
             appendLine("### Task Context")
             appendLine("- Goal: ${goal.ifBlank { "(none)" }}")
+            appendLine("- Latest user message: ${latestUserMessage.ifBlank { "(none)" }}")
             appendLine("- Goal status: $goalStatus")
             appendLine("- Last UI change: $lastUiChange")
             appendLine("- Current foreground package: ${knownPackage ?: "(unknown)"}")
@@ -953,10 +1489,6 @@ class AgentManager(
                 )
             )
             appendLine("```")
-            appendLine()
-            appendLine()
-            appendLine("### Recent Memory")
-            append(AgentSessionFormatting.renderMemoryMarkdown(agentState.memory, RECENT_MEMORY_LIMIT))
             appendLine()
         }
     }
@@ -1035,37 +1567,11 @@ class AgentManager(
         }.trim()
     }
 
-    private fun buildActionTranscriptMessage(): String? {
-        return AgentSessionFormatting.buildActionTranscriptMessage(actionTranscript)
-    }
-
-    private fun buildScreenshotMessage(): JSONObject? {
-        if (latestScreenshotRevision == null || latestScreenshotRevision != latestScreenRevision) {
-            return null
-        }
-        val dataUrl = latestScreenshotDataUrl?.takeIf { it.isNotBlank() } ?: return null
-        val content = JSONArray()
-            .put(
-                JSONObject()
-                    .put("type", "input_text")
-                    .put("text", buildScreenshotContextText())
-            )
-            .put(
-                JSONObject()
-                    .put("type", "input_image")
-                    .put("image_url", dataUrl)
-            )
-
-        return JSONObject()
-            .put("role", "user")
-            .put("content", content)
-    }
-
     private fun buildAnthropicAgentMessages(): JSONArray {
         val content = JSONArray()
             .put(anthropicTextBlock(buildAgentContextMessage()))
+            .put(anthropicTextBlock(conversation.toHistoryBlockText()))
 
-        AgentSessionFormatting.buildActionTranscriptMessage(actionTranscript)?.let { content.put(anthropicTextBlock(it)) }
         buildAccessibilityTreeMessage()?.let { content.put(anthropicTextBlock(it)) }
         buildAnthropicScreenshotBlocks()?.forEach { block -> content.put(block) }
 
@@ -1073,6 +1579,44 @@ class AgentManager(
             JSONObject()
                 .put("role", "user")
                 .put("content", content)
+        )
+    }
+
+    private fun buildOpenAiAgentMessages(): JSONArray {
+        val userContent = JSONArray()
+            .put(JSONObject().put("type", "text").put("text", buildAgentContextMessage()))
+            .put(JSONObject().put("type", "text").put("text", conversation.toHistoryBlockText()))
+
+        buildAccessibilityTreeMessage()?.let {
+            userContent.put(JSONObject().put("type", "text").put("text", it))
+        }
+        buildOpenAiScreenshotBlocks()?.forEach { block -> userContent.put(block) }
+
+        return JSONArray()
+            .put(
+                JSONObject()
+                    .put("role", "system")
+                    .put("content", AgentTooling.systemPrompt(agentState.currentGoal.ifBlank { latestUserMessage }))
+            )
+            .put(
+                JSONObject()
+                    .put("role", "user")
+                    .put("content", userContent)
+            )
+    }
+
+    private fun buildOpenAiScreenshotBlocks(): List<JSONObject>? {
+        if (latestScreenshotRevision == null || latestScreenshotRevision != latestScreenRevision) {
+            return null
+        }
+        val dataUrl = latestScreenshotDataUrl?.takeIf { it.isNotBlank() } ?: return null
+        return listOf(
+            JSONObject()
+                .put("type", "text")
+                .put("text", buildScreenshotContextText()),
+            JSONObject()
+                .put("type", "image_url")
+                .put("image_url", JSONObject().put("url", dataUrl))
         )
     }
 
@@ -1152,8 +1696,6 @@ class AgentManager(
                 lastObservation = screenObservationFromContent(content, imageRevision)
             )
         }
-
-        rememberToolOutcome(toolName, details, content, ok)
 
         if (ok) {
             lastSuccessfulToolName = toolName
@@ -1251,40 +1793,6 @@ class AgentManager(
         }
     }
 
-    private fun rememberToolOutcome(
-        toolName: String,
-        details: String,
-        content: JSONObject,
-        ok: Boolean
-    ) {
-        val action = buildString {
-            append(toolName)
-            if (details.isNotBlank()) {
-                append(": ")
-                append(details)
-            }
-        }
-        val resultParts = mutableListOf(if (ok) "success" else "failure")
-        content.optString("status").ifBlank { null }?.let { resultParts.add("status=$it") }
-        content.optString("wait_status").ifBlank { null }?.let { resultParts.add("wait=$it") }
-        content.optString("resolved_label").ifBlank { null }?.let { resultParts.add("label=$it") }
-        content.optString("observed_package").ifBlank { null }?.let { resultParts.add("observed_package=$it") }
-        content.optString("matched_node_ref").ifBlank { null }?.let { resultParts.add("matched=$it") }
-        content.optString("question").ifBlank { null }?.let { resultParts.add("question=$it") }
-        content.optString("screen_delta").ifBlank { null }?.let { resultParts.add("delta=$it") }
-        content.optString("observation_hint").ifBlank { null }?.let { resultParts.add("hint=$it") }
-        content.optString("error_kind").ifBlank { null }?.let { resultParts.add("error_kind=$it") }
-        content.optString("recovery_hint").ifBlank { null }?.let { resultParts.add("recovery_hint=$it") }
-        content.optString("error").ifBlank { null }?.let { resultParts.add("error=$it") }
-
-        agentState = agentState.copy(
-            memory = (agentState.memory + MemoryEntry(
-                action = AgentSessionFormatting.compactMarkdownText(action),
-                result = AgentSessionFormatting.compactMarkdownText(resultParts.joinToString("; "))
-            )).takeLast(MAX_MEMORY_ENTRIES)
-        )
-    }
-
     private fun decodeScreenshotDataUrl(dataUrl: String): Bitmap? {
         val marker = "base64,"
         val startIndex = dataUrl.indexOf(marker)
@@ -1307,9 +1815,7 @@ class AgentManager(
     }
 
     private fun shouldContinueCurrentAgentTask(): Boolean {
-        return agentState.needsUserInput &&
-            agentState.currentGoal.isNotBlank() &&
-            actionTranscript.isNotEmpty()
+        return agentState.needsUserInput && agentState.currentGoal.isNotBlank()
     }
 
     private fun appendActionTranscriptGoal(goal: String) {
@@ -1346,7 +1852,7 @@ class AgentManager(
 
     private fun appendActionTranscriptEntry(title: String, bodyMarkdown: String) {
         if (bodyMarkdown.isBlank()) return
-        actionTranscript.add(
+        evalTranscript.add(
             ActionTranscriptEntry(
                 title = title,
                 bodyMarkdown = bodyMarkdown
@@ -1359,16 +1865,22 @@ class AgentManager(
     }
 
     companion object {
-        private const val OPENAI_RESPONSES_ENDPOINT = "https://api.openai.com/v1/responses"
         private const val ANTHROPIC_MESSAGES_ENDPOINT = "https://api.anthropic.com/v1/messages"
+        private const val OPENAI_CHAT_COMPLETIONS_ENDPOINT = "https://api.openai.com/v1/chat/completions"
         private const val ANTHROPIC_VERSION = "2023-06-01"
-        private const val AGENT_REASONING_EFFORT = "medium"
         private const val ANTHROPIC_AGENT_MAX_TOKENS = 4096
         private const val CHAT_MAX_TOKENS = 1024
+        private const val CHAT_MAX_DIRECT_TOOL_ROUNDS = 6
+        private const val WEB_SEARCH_MAX_TOKENS = 1024
+        private const val WEB_SEARCH_MAX_USES = 5
         private const val MAX_AGENT_ERROR_BODY_CHARS = 600
         private const val HARD_LOOP_THRESHOLD = 4
         private const val MAX_MEMORY_ENTRIES = 12
         private const val RECENT_MEMORY_LIMIT = 6
+        private const val EMPTY_ACTION_RETRY_CAP = 2
+        private val DIRECT_CHAT_SHARED_TOOLS = SharedToolSchemas.chatFunctionTools()
+            .map { it.name }
+            .toSet()
         private val DATA_URL_REGEX = Regex("""^data:([^;]+);base64,(.+)$""", setOf(RegexOption.DOT_MATCHES_ALL))
         private val USER_FACING_TOOLS = setOf(
             AgentTooling.TOOL_SPEAK, AgentTooling.TOOL_ASK_USER, AgentTooling.TOOL_TASK_COMPLETE

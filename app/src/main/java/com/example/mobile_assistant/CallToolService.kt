@@ -37,8 +37,10 @@ internal class CallToolService(
                     .put("ok", false)
                     .put("tool", SharedToolSchemas.TOOL_CALL_CONTACT)
                     .put("contact_name", contactName)
+                    .put("needs_permission", "CALL_PHONE")
                     .put("error", "CALL_PHONE permission is not granted."),
-                chatResponse = "I need phone call permission before I can place calls."
+                chatResponse = "I need phone call permission first.",
+                uiAction = PermissionUiActions.appPermission(context, Manifest.permission.CALL_PHONE)
             )
         }
 

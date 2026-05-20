@@ -1,63 +1,104 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Core palette (same in both modes) -->
-    <color name="assistant_primary">#E76F51</color>
-    <color name="assistant_secondary">#F4A261</color>
-    <color name="assistant_accent">#2A9D8F</color>
+    <!-- Nimbus — warm-brown brand surface, matched to the home page (identical in light & night) -->
+    <color name="assistant_primary">#A98467</color>
+    <color name="assistant_secondary">#C97E5A</color>
+    <color name="assistant_accent">#A98467</color>
     <color name="assistant_on_accent">#FFFFFF</color>
 
     <!-- Text -->
-    <color name="assistant_text">#FAF9F7</color>
-    <color name="assistant_hint">#8A8580</color>
-    <color name="assistant_transcript">#DDFAF9F7</color>
-    <color name="assistant_button_text">#E8E5E0</color>
-    <color name="assistant_status">#668A8580</color>
-    <color name="assistant_input_hint">#448A8580</color>
-    <color name="assistant_branding">#88E76F51</color>
-    <color name="assistant_primary_text">#E76F51</color>
+    <color name="assistant_text">#3D2F23</color>
+    <color name="assistant_hint">#9A8770</color>
+    <color name="assistant_transcript">#7C6A57</color>
+    <color name="assistant_button_text">#8A6A45</color>
+    <color name="assistant_status">#9A8770</color>
+    <color name="assistant_input_hint">#9A8770</color>
+    <color name="assistant_branding">#A98467</color>
+    <color name="assistant_primary_text">#3D2F23</color>
 
     <!-- Surfaces -->
-    <color name="assistant_surface">#1C1917</color>
-    <color name="assistant_surface_dim">#161311</color>
-    <color name="assistant_keyboard_bg">#1C1917</color>
-    <color name="assistant_separator">#1AE76F51</color>
+    <color name="assistant_surface">#F0E7D8</color>
+    <color name="assistant_surface_dim">#F0E7D8</color>
+    <color name="assistant_keyboard_bg">#F0E7D8</color>
+    <color name="assistant_separator">#EBE1D2</color>
 
     <!-- Cancel / pill button -->
-    <color name="assistant_cancel_bg">#2A2522</color>
-    <color name="assistant_cancel_stroke">#40A09080</color>
+    <color name="assistant_cancel_bg">#F0E7D8</color>
+    <color name="assistant_cancel_stroke">#E2D4BE</color>
 
     <!-- Collapse button (alpha-blended) -->
-    <color name="assistant_collapse_bg">#99191614</color>
-    <color name="assistant_collapse_stroke">#33FAF9F7</color>
+    <color name="assistant_collapse_bg">#CCFFFCF8</color>
+    <color name="assistant_collapse_stroke">#1A3D2F23</color>
 
     <!-- Card -->
-    <color name="assistant_card_bg">#F01C1917</color>
-    <color name="assistant_card_stroke">#7A3A2A</color>
+    <color name="assistant_card_bg">#FFFCF8</color>
+    <color name="assistant_card_stroke">#EBE1D2</color>
 
     <!-- Gradient overlay -->
-    <color name="assistant_gradient_start">#00141210</color>
-    <color name="assistant_gradient_end">#CC141210</color>
+    <color name="assistant_gradient_start">#00F6F1EA</color>
+    <color name="assistant_gradient_end">#E6F6F1EA</color>
 
     <!-- Chat bubbles -->
-    <color name="assistant_user_bubble_text">#FAF9F7</color>
-    <color name="assistant_user_bubble_bg">#3D2218</color>
-    <color name="assistant_bot_bubble_text">#DDFAF9F7</color>
-    <color name="assistant_bot_bubble_bg">#1C1917</color>
-    <color name="assistant_completion_text">#FAF9F7</color>
-    <color name="assistant_completion_bg">#1A3D38</color>
-    <color name="assistant_code_text">#5DCEB8</color>
-    <color name="assistant_code_bg">#161311</color>
-    <color name="assistant_prompt_text">#E8E5E0</color>
-    <color name="assistant_prompt_bg">#1E1A17</color>
-    <color name="assistant_expand_text">#E8E5E0</color>
-    <color name="assistant_expand_bg">#2A2320</color>
+    <color name="assistant_user_bubble_text">#FFFFFF</color>
+    <color name="assistant_user_bubble_bg">#A98467</color>
+    <color name="assistant_bot_bubble_text">#3D2F23</color>
+    <color name="assistant_bot_bubble_bg">#F0E7D8</color>
+    <color name="assistant_completion_text">#3D2F23</color>
+    <color name="assistant_completion_bg">#F3EBDC</color>
+    <color name="assistant_code_text">#8A6A45</color>
+    <color name="assistant_code_bg">#F0E7D8</color>
+    <color name="assistant_prompt_text">#7C6A57</color>
+    <color name="assistant_prompt_bg">#F0E7D8</color>
+    <color name="assistant_expand_text">#7C6A57</color>
+    <color name="assistant_expand_bg">#EFE3D2</color>
+    <color name="assistant_reasoning_bg">#EAE0CC</color>
 
     <!-- Wave visualiser -->
-    <color name="assistant_wave_accent">#E76F51</color>
-    <color name="assistant_wave_dim">#7A3A2A</color>
+    <color name="assistant_wave_accent">#A98467</color>
+    <color name="assistant_wave_dim">#D8C3A8</color>
 
     <!-- FAB bubble -->
-    <color name="assistant_fab_bg">#E76F51</color>
+    <color name="assistant_fab_bg">#A98467</color>
     <color name="assistant_fab_stroke">#00000000</color>
     <color name="assistant_fab_dot">#FFFFFF</color>
+
+    <!-- Soft warm-brown dark palette (no gradients) -->
+    <color name="home_canvas_bg">#171310</color>
+    <color name="home_header_bg">#221C16</color>
+    <color name="home_hero_stroke">#3A2F25</color>
+    <color name="home_hero_title">#F2EADD</color>
+    <color name="home_hero_body">#BCAB95</color>
+    <color name="home_chip_bg">#2E2419</color>
+    <color name="home_chip_stroke">#4A3B29</color>
+    <color name="home_chip_text">#D8B68A</color>
+    <color name="home_logo_bg">#F2EADD</color>
+    <color name="home_logo_stroke">#F2EADD</color>
+    <color name="home_section_title">#F2EADD</color>
+    <color name="home_section_meta">#A8967E</color>
+    <color name="home_panel_bg">#221C16</color>
+    <color name="home_panel_stroke">#3A2F25</color>
+    <color name="home_panel_title">#F2EADD</color>
+    <color name="home_panel_meta">#D8B68A</color>
+    <color name="home_panel_body">#BCAB95</color>
+    <color name="home_step_bg">#C9A87E</color>
+    <color name="home_step_text">#1C1611</color>
+    <color name="home_field_bg">#1C1712</color>
+    <color name="home_field_stroke">#3A2F25</color>
+    <color name="home_field_text">#F2EADD</color>
+    <color name="home_field_hint">#A8967E</color>
+    <color name="home_info_bg">#222A1B</color>
+    <color name="home_info_stroke">#3E4A2E</color>
+    <color name="home_info_text">#AEC58A</color>
+    <color name="home_button_primary">#C9A87E</color>
+    <color name="home_button_primary_text">#1C1611</color>
+    <color name="home_button_secondary_stroke">#4A3B29</color>
+    <color name="home_button_secondary_text">#D8B68A</color>
+    <color name="home_button_accent">#D89A72</color>
+    <color name="home_button_accent_text">#1C1611</color>
+    <color name="home_footer_bg">#221C16</color>
+    <color name="home_footer_stroke">#3A2F25</color>
+    <color name="home_footer_text">#A8967E</color>
+    <color name="home_footer_link">#D8B68A</color>
+    <color name="home_progress_track">#3A2F25</color>
+    <color name="home_progress_fill">#C9A87E</color>
 </resources>

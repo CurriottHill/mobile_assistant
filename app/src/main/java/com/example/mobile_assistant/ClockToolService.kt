@@ -46,6 +46,20 @@ internal class ClockToolService(
         }
     }
 
+    fun executeStopwatch(arguments: JSONObject): SharedToolExecutionResult {
+        return when (arguments.optString("action").trim().lowercase(Locale.US)) {
+            "start" -> startStopwatch(arguments)
+            "pause" -> pauseStopwatch()
+            "resume" -> resumeStopwatch()
+            "reset" -> resetStopwatch()
+            "status" -> stopwatchStatus()
+            else -> invalidActionResult(
+                toolName = SharedToolSchemas.TOOL_CLOCK_STOPWATCH,
+                supportedActions = "start, pause, resume, reset, or status"
+            )
+        }
+    }
+
     private fun setTimer(arguments: JSONObject): SharedToolExecutionResult {
         val durationSeconds = arguments.optInt("duration_seconds", 0)
         if (durationSeconds !in 1..MAX_TIMER_DURATION_SECONDS) {
@@ -441,6 +455,141 @@ internal class ClockToolService(
         )
     }
 
+    private fun startStopwatch(arguments: JSONObject): SharedToolExecutionResult {
+        val now = nowEpochMs()
+        val label = arguments.optString("label").trim().ifBlank { null }
+        val state = StopwatchState(
+            label = label,
+            isRunning = true,
+            accumulatedMs = 0L,
+            startedAtEpochMs = now
+        )
+        saveStopwatch(state)
+        return stopwatchResult(
+            action = "start",
+            state = state,
+            chatResponse = buildString {
+                append("Started the stopwatch")
+                label?.let {
+                    append(" called ")
+                    append(it)
+                }
+                append(".")
+            },
+            now = now
+        )
+    }
+
+    private fun pauseStopwatch(): SharedToolExecutionResult {
+        val now = nowEpochMs()
+        val state = loadStopwatch()
+        if (state == null) {
+            return noStopwatchResult("pause")
+        }
+        val paused = state.copy(
+            isRunning = false,
+            accumulatedMs = state.elapsedMs(now),
+            startedAtEpochMs = null
+        )
+        saveStopwatch(paused)
+        return stopwatchResult(
+            action = "pause",
+            state = paused,
+            chatResponse = "Paused the stopwatch at ${ClockToolStateSupport.formatDurationForSpeech(paused.elapsedMs(now))}.",
+            now = now
+        )
+    }
+
+    private fun resumeStopwatch(): SharedToolExecutionResult {
+        val now = nowEpochMs()
+        val state = loadStopwatch()
+        if (state == null) {
+            return noStopwatchResult("resume")
+        }
+        if (state.isRunning) {
+            return stopwatchResult(
+                action = "resume",
+                state = state,
+                chatResponse = "The stopwatch is already running.",
+                now = now
+            )
+        }
+        val resumed = state.copy(
+            isRunning = true,
+            startedAtEpochMs = now
+        )
+        saveStopwatch(resumed)
+        return stopwatchResult(
+            action = "resume",
+            state = resumed,
+            chatResponse = "Resumed the stopwatch.",
+            now = now
+        )
+    }
+
+    private fun resetStopwatch(): SharedToolExecutionResult {
+        prefs.edit().remove(PREF_STOPWATCH).apply()
+        return SharedToolExecutionResult(
+            toolName = SharedToolSchemas.TOOL_CLOCK_STOPWATCH,
+            content = JSONObject()
+                .put("ok", true)
+                .put("tool", SharedToolSchemas.TOOL_CLOCK_STOPWATCH)
+                .put("action", "reset")
+                .put("state", "reset")
+                .put("elapsed_seconds", 0),
+            chatResponse = "Reset the stopwatch."
+        )
+    }
+
+    private fun stopwatchStatus(): SharedToolExecutionResult {
+        val now = nowEpochMs()
+        val state = loadStopwatch()
+        if (state == null) {
+            return noStopwatchResult("status")
+        }
+        val elapsed = ClockToolStateSupport.formatDurationForSpeech(state.elapsedMs(now))
+        return stopwatchResult(
+            action = "status",
+            state = state,
+            chatResponse = "The stopwatch is at $elapsed.",
+            now = now
+        )
+    }
+
+    private fun stopwatchResult(
+        action: String,
+        state: StopwatchState,
+        chatResponse: String,
+        now: Long
+    ): SharedToolExecutionResult {
+        val elapsedMs = state.elapsedMs(now)
+        return SharedToolExecutionResult(
+            toolName = SharedToolSchemas.TOOL_CLOCK_STOPWATCH,
+            content = JSONObject()
+                .put("ok", true)
+                .put("tool", SharedToolSchemas.TOOL_CLOCK_STOPWATCH)
+                .put("action", action)
+                .put("state", if (state.isRunning) "running" else "paused")
+                .put("elapsed_seconds", elapsedMs / 1000L)
+                .also { content ->
+                    state.label?.let { content.put("label", it) }
+                },
+            chatResponse = chatResponse
+        )
+    }
+
+    private fun noStopwatchResult(action: String): SharedToolExecutionResult {
+        return SharedToolExecutionResult(
+            toolName = SharedToolSchemas.TOOL_CLOCK_STOPWATCH,
+            content = JSONObject()
+                .put("ok", false)
+                .put("tool", SharedToolSchemas.TOOL_CLOCK_STOPWATCH)
+                .put("action", action)
+                .put("error", "No assistant stopwatch is active."),
+            chatResponse = "I am not tracking a stopwatch yet."
+        )
+    }
+
     private fun invalidActionResult(
         toolName: String,
         supportedActions: String
@@ -464,6 +613,18 @@ internal class ClockToolService(
     private fun saveTrackedTimers(timers: List<TrackedTimer>) {
         prefs.edit()
             .putString(PREF_TIMERS, ClockToolStateSupport.trackedTimersToJsonArray(timers).toString())
+            .apply()
+    }
+
+    private fun loadStopwatch(): StopwatchState? {
+        val raw = prefs.getString(PREF_STOPWATCH, null) ?: return null
+        val json = runCatching { JSONObject(raw) }.getOrNull()
+        return StopwatchState.fromJson(json)
+    }
+
+    private fun saveStopwatch(state: StopwatchState) {
+        prefs.edit()
+            .putString(PREF_STOPWATCH, state.toJson().toString())
             .apply()
     }
 
@@ -542,6 +703,7 @@ internal class ClockToolService(
     companion object {
         private const val PREFS_NAME = "clock_tool_state"
         private const val PREF_TIMERS = "tracked_timers"
+        private const val PREF_STOPWATCH = "stopwatch"
         private const val MAX_TRACKED_TIMERS = 10
         private const val MAX_TIMER_DURATION_SECONDS = 86_400
     }
