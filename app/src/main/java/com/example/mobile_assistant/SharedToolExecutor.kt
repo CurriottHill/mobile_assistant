@@ -1,5 +1,7 @@
 package com.example.mobile_assistant
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -17,14 +19,26 @@ internal class SharedToolExecutor(
     private val deviceMediaToolService: DeviceMediaToolService,
     private val currentLocationToolService: CurrentLocationToolService,
     private val mapsTravelTimeToolService: MapsTravelTimeToolService,
-    private val notificationToolService: NotificationToolService
+    private val notificationToolService: NotificationToolService,
+    private val weatherToolService: WeatherToolService,
+    private val memoryToolService: MemoryToolService,
+    private val genericMessagingToolService: GenericMessagingToolService,
+    private val memoryRepository: MemoryRepository? = null,
+    private val memorySaveLog: MemorySaveLog? = null
 ) {
     suspend fun execute(toolName: String, arguments: JSONObject): SharedToolExecutionResult? {
+        val result = dispatch(toolName, arguments) ?: return null
+        runCatching { recordAutoMemorySaves(toolName, arguments, result) }
+        return result
+    }
+
+    private suspend fun dispatch(toolName: String, arguments: JSONObject): SharedToolExecutionResult? {
         return when (toolName) {
             SharedToolSchemas.TOOL_SEARCH_WEB -> executeSearchWeb(arguments)
             SharedToolSchemas.TOOL_CALL_CONTACT -> callToolService.executeCall(arguments)
             SharedToolSchemas.TOOL_SEND_SMS -> smsToolService.executeSendSms(arguments)
             SharedToolSchemas.TOOL_SEND_WHATSAPP -> whatsAppToolService.executeSend(arguments)
+            SharedToolSchemas.TOOL_SEND_MESSAGE -> genericMessagingToolService.execute(arguments)
             SharedToolSchemas.TOOL_START_NAVIGATION -> mapsToolService.executeStartNavigation(arguments)
             SharedToolSchemas.TOOL_CLOCK_TIMER -> clockToolService.executeTimer(arguments)
             SharedToolSchemas.TOOL_CLOCK_ALARM -> clockToolService.executeAlarm(arguments)
@@ -60,6 +74,14 @@ internal class SharedToolExecutor(
             SharedToolSchemas.TOOL_GET_LOCATION -> currentLocationToolService.execute(arguments)
             SharedToolSchemas.TOOL_MAPS_TRAVEL_TIME -> mapsTravelTimeToolService.execute(arguments)
             SharedToolSchemas.TOOL_READ_NOTIFICATIONS -> notificationToolService.execute(arguments)
+            SharedToolSchemas.TOOL_GET_WEATHER -> weatherToolService.execute(arguments)
+            SharedToolSchemas.TOOL_MEMORY_READ -> memoryToolService.executeRead(arguments)
+            SharedToolSchemas.TOOL_MEMORY_EDIT -> memoryToolService.executeEdit(arguments)
+            SharedToolSchemas.TOOL_MEMORY_LIST -> memoryToolService.executeList(arguments)
+            SharedToolSchemas.TOOL_MEMORY_LINK -> memoryToolService.executeLink(arguments)
+            SharedToolSchemas.TOOL_MEMORY_SAVE_FACT -> withContext(Dispatchers.IO) {
+                memoryToolService.executeSaveFact(arguments)
+            }
             else -> null
         }
     }
@@ -1108,6 +1130,100 @@ internal class SharedToolExecutor(
                 append(".")
             }
         }
+    }
+
+    private fun recordAutoMemorySaves(
+        toolName: String,
+        arguments: JSONObject,
+        result: SharedToolExecutionResult
+    ) {
+        val repo = memoryRepository ?: return
+        val hadHardError = result.content.optString("error").let { err ->
+            err.startsWith("Missing", ignoreCase = true) ||
+                err.startsWith("Unsupported", ignoreCase = true) ||
+                err.startsWith("Invalid", ignoreCase = true)
+        }
+        if (hadHardError) return
+
+        when (toolName) {
+            SharedToolSchemas.TOOL_SEND_SMS -> {
+                val contact = arguments.optString("contact_name").trim()
+                if (isUsefulContactKey(contact)) {
+                    upsertPersonSafe(repo, contact, channel = "sms")
+                }
+            }
+            SharedToolSchemas.TOOL_SEND_WHATSAPP -> {
+                val contact = arguments.optString("contact_name").trim()
+                if (isUsefulContactKey(contact)) {
+                    upsertPersonSafe(repo, contact, channel = "whatsapp")
+                }
+            }
+            SharedToolSchemas.TOOL_SEND_MESSAGE -> {
+                val target = arguments.optString("target").trim()
+                val app = arguments.optString("app").trim().lowercase()
+                if (isUsefulContactKey(target) && app.isNotBlank()) {
+                    upsertPersonSafe(repo, target, channel = app)
+                }
+            }
+            SharedToolSchemas.TOOL_CALL_CONTACT -> {
+                val contact = arguments.optString("contact_name").trim()
+                if (isUsefulContactKey(contact)) {
+                    upsertPersonSafe(repo, contact, channel = "call")
+                }
+            }
+            SharedToolSchemas.TOOL_START_NAVIGATION -> {
+                val destination = arguments.optString("destination").trim()
+                if (isUsefulPlaceKey(destination)) {
+                    upsertPlaceSafe(repo, destination)
+                }
+            }
+            SharedToolSchemas.TOOL_MAPS_TRAVEL_TIME -> {
+                val destination = arguments.optString("destination").trim()
+                if (isUsefulPlaceKey(destination)) {
+                    upsertPlaceSafe(repo, destination)
+                }
+            }
+            SharedToolSchemas.TOOL_MEMORY_SAVE_FACT -> {
+                if (result.content.optBoolean("saved", false)) {
+                    val path = result.content.optString("path").trim()
+                    val statement = result.content.optString("statement").trim()
+                    val subject = result.content.optString("subject").trim()
+                    if (path.isNotBlank()) {
+                        memorySaveLog?.record(path, statement.ifBlank { subject }.ifBlank { "memory fact" })
+                    }
+                }
+            }
+        }
+    }
+
+    private fun upsertPersonSafe(repo: MemoryRepository, name: String, channel: String) {
+        runCatching { repo.upsertPerson(name, channel = channel) }
+            .getOrNull()
+            ?.let { saved -> memorySaveLog?.record(saved.path, "$name via $channel") }
+    }
+
+    private fun upsertPlaceSafe(repo: MemoryRepository, name: String) {
+        runCatching { repo.upsertPlace(name) }
+            .getOrNull()
+            ?.let { saved -> memorySaveLog?.record(saved.path, "place $name") }
+    }
+
+    private fun isUsefulContactKey(value: String): Boolean {
+        if (value.isBlank()) return false
+        if (value.length < 2) return false
+        // Skip when the contact "name" is actually a phone number — we don't want people/5551234567.md.
+        val digitsOnly = value.count { it.isDigit() }
+        val nonDigits = value.count { !it.isDigit() && !it.isWhitespace() && it != '+' && it != '-' && it != '(' && it != ')' }
+        return nonDigits > 0 || digitsOnly < 4
+    }
+
+    private fun isUsefulPlaceKey(value: String): Boolean {
+        if (value.isBlank()) return false
+        if (value.length < 2) return false
+        // Skip raw lat,lng pairs.
+        val latLng = Regex("""^-?\d+\.\d+\s*,\s*-?\d+\.\d+$""")
+        if (latLng.matches(value.trim())) return false
+        return true
     }
 
     private fun buildSpotifyPlaylistMessage(playlists: SpotifyPlaylistListResult): String {

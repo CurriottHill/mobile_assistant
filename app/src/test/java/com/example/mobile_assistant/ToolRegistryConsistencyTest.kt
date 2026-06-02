@@ -36,7 +36,14 @@ class ToolRegistryConsistencyTest {
             SharedToolSchemas.TOOL_GET_DEVICE_STATUS,
             SharedToolSchemas.TOOL_GET_LOCATION,
             SharedToolSchemas.TOOL_MAPS_TRAVEL_TIME,
-            SharedToolSchemas.TOOL_READ_NOTIFICATIONS
+            SharedToolSchemas.TOOL_READ_NOTIFICATIONS,
+            SharedToolSchemas.TOOL_GET_WEATHER,
+            SharedToolSchemas.TOOL_SEND_MESSAGE,
+            SharedToolSchemas.TOOL_MEMORY_READ,
+            SharedToolSchemas.TOOL_MEMORY_EDIT,
+            SharedToolSchemas.TOOL_MEMORY_LIST,
+            SharedToolSchemas.TOOL_MEMORY_LINK,
+            SharedToolSchemas.TOOL_MEMORY_SAVE_FACT
         )
         val toolNames = SharedToolSchemas.agentFunctionTools().map { it.name }.toSet()
         expected.forEach { name ->
@@ -77,6 +84,13 @@ class ToolRegistryConsistencyTest {
         assertEquals(SharedToolSchemas.TOOL_MAPS_TRAVEL_TIME, AgentTooling.canonicalToolName("how_far"))
         assertEquals(SharedToolSchemas.TOOL_READ_NOTIFICATIONS, AgentTooling.canonicalToolName("notifications"))
         assertEquals(SharedToolSchemas.TOOL_GET_LOCATION, AgentTooling.canonicalToolName("where am i"))
+        assertEquals(SharedToolSchemas.TOOL_GET_WEATHER, AgentTooling.canonicalToolName("forecast"))
+        assertEquals(SharedToolSchemas.TOOL_SEND_MESSAGE, AgentTooling.canonicalToolName("telegram message"))
+        assertEquals(SharedToolSchemas.TOOL_MEMORY_READ, AgentTooling.canonicalToolName("read memory"))
+        assertEquals(SharedToolSchemas.TOOL_MEMORY_EDIT, AgentTooling.canonicalToolName("write memory"))
+        assertEquals(SharedToolSchemas.TOOL_MEMORY_LIST, AgentTooling.canonicalToolName("memory files"))
+        assertEquals(SharedToolSchemas.TOOL_MEMORY_LINK, AgentTooling.canonicalToolName("link memory"))
+        assertEquals(SharedToolSchemas.TOOL_MEMORY_SAVE_FACT, AgentTooling.canonicalToolName("remember preference"))
         assertEquals(SharedToolSchemas.TOOL_CHECK_EMAILS, AgentTooling.canonicalToolName("search emails"))
         assertEquals(AgentTooling.TOOL_FIND_TEXT, AgentTooling.canonicalToolName("find_text"))
         assertEquals(AgentTooling.TOOL_OPEN_RECENTS, AgentTooling.canonicalToolName("recents"))

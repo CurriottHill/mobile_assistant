@@ -47,6 +47,7 @@ internal object AgentTooling {
     const val TOOL_SPOTIFY_ARTIST_TOP_TRACKS = SharedToolSchemas.TOOL_SPOTIFY_ARTIST_TOP_TRACKS
     const val TOOL_SEND_SMS = SharedToolSchemas.TOOL_SEND_SMS
     const val TOOL_SEND_WHATSAPP = SharedToolSchemas.TOOL_SEND_WHATSAPP
+    const val TOOL_SEND_MESSAGE = SharedToolSchemas.TOOL_SEND_MESSAGE
     const val TOOL_START_NAVIGATION = SharedToolSchemas.TOOL_START_NAVIGATION
     const val TOOL_SPOTIFY_CREATE_PLAYLIST = SharedToolSchemas.TOOL_SPOTIFY_CREATE_PLAYLIST
     const val TOOL_CHECK_EMAILS = SharedToolSchemas.TOOL_CHECK_EMAILS
@@ -63,6 +64,12 @@ internal object AgentTooling {
     const val TOOL_GET_LOCATION = SharedToolSchemas.TOOL_GET_LOCATION
     const val TOOL_MAPS_TRAVEL_TIME = SharedToolSchemas.TOOL_MAPS_TRAVEL_TIME
     const val TOOL_READ_NOTIFICATIONS = SharedToolSchemas.TOOL_READ_NOTIFICATIONS
+    const val TOOL_GET_WEATHER = SharedToolSchemas.TOOL_GET_WEATHER
+    const val TOOL_MEMORY_READ = SharedToolSchemas.TOOL_MEMORY_READ
+    const val TOOL_MEMORY_EDIT = SharedToolSchemas.TOOL_MEMORY_EDIT
+    const val TOOL_MEMORY_LIST = SharedToolSchemas.TOOL_MEMORY_LIST
+    const val TOOL_MEMORY_LINK = SharedToolSchemas.TOOL_MEMORY_LINK
+    const val TOOL_MEMORY_SAVE_FACT = SharedToolSchemas.TOOL_MEMORY_SAVE_FACT
     const val TOOL_OPEN_RECENTS = "open_recents"
     const val TOOL_OPEN_NOTIFICATIONS = "open_notifications"
     const val TOOL_FIND_TEXT = "find_text"
@@ -92,9 +99,10 @@ internal object AgentTooling {
         ),
         FunctionToolSchema(
             name = TOOL_ASK_USER,
-            description = "Ask the user a question ONLY when genuinely stuck or missing critical info (e.g. which account, which contact). Start with 'quick question'.",
+            description = "Use ONLY when (a) you are about to take a significant/irreversible action and must confirm, (b) there is a genuine fork that you cannot reasonably decide yourself, or (c) the user told you to confirm. HARD RULE: if anything you would say to the user is phrased as a question, it MUST go through this tool — never as task_complete or speak text. But strongly prefer to NOT ask: pick the most reasonable interpretation and act. It is better to act and be wrong than to stall.",
             properties = mapOf(
-                "question" to stringToolProperty("Question for the user.")
+                "question" to stringToolProperty("Question for the user."),
+                "auto_listen" to booleanToolProperty("Whether to automatically open the microphone or keyboard for the user's reply. Default true. Set false only when no reply is expected — e.g. delivering a final answer or status update that ends the interaction.")
             ),
             required = listOf("question")
         ),
@@ -290,7 +298,10 @@ private fun toolSpecs(): List<FunctionToolSchema> {
         return agentOnlyToolSpecs + SharedToolSchemas.agentFunctionTools()
     }
 
-    fun systemPrompt(goal: String = ""): String {
+    fun systemPrompt(
+        goal: String = "",
+        memorySnapshot: MemoryPromptSnapshot = MemoryPromptSnapshot.EMPTY
+    ): String {
         val toolSpecs = toolSpecs()
         val toolsSection = buildString {
             appendLine("## Available Tools")
@@ -314,11 +325,15 @@ private fun toolSpecs(): List<FunctionToolSchema> {
         return buildString {
             appendLine(PromptClock.promptContextHeader())
             appendLine()
+            memorySnapshot.renderPromptSections().takeIf { it.isNotBlank() }?.let {
+                appendLine(it)
+                appendLine()
+            }
             append(
                 """
-You are the ultimate voice assistant on Android, capable of using a wide variety of tools to help the user with literally any task on their phone. You are maximally helpful, brutally honest, witty, a little sarcastic, and don't sugarcoat things. Channel Douglas Adams + JARVIS + Deadpool energy — clever, irreverent, zero corporate fluff.
+You are an Android voice assistant that completes tasks by controlling apps and using tools on the user's phone.
 
-The goal is to be an assistant that actually does things here are some examples of what you can do:
+The goal is to be an assistant that actually does things. Examples of what you can do:
 1. book a restaurant
 2. find parking
 3. summarize and read emails/slack messages on a commute
@@ -361,6 +376,11 @@ Tool usage rules:
 9. If the intended target is close to a bottom bar, tab bar, or nearby control, bias the tap slightly inward so it stays inside the target instead of landing on the adjacent UI.
 10. After calling a tool and you receive the accessibility tree, if you do not have a screenshot, that means something is blocking it so do not try to read_screen again immediately.
 11. On the very first action of a task, do not call read_screen unless you are already on the correct app and genuinely need a screenshot to proceed. If the task requires a different app, open it directly as your first action — you already have the current accessibility tree. Only call read_screen first if the correct app is already in the foreground AND the tree alone is insufficient.
+12. main.md holds frequently reused user facts (name, home, work, default messaging app, routine references under its '## Routines' heading, etc.) and is auto-injected. Subdir memory (people/, places/, preferences/) and routines.md are NOT auto-injected — call memory_read or memory_list when relevant. When a turn contains a likely durable fact, call memory_save_fact before finishing; it reads existing memory and decides what is new. Do not call it on every prompt. Never ask 'should I remember that?' — just save when useful. Skip soul.md unless the user explicitly asks to change personality. Do not store raw email/notification/webpage bodies — store the durable fact.
+13. Never call memory_open. It does not exist.
+14. BEFORE calling task_complete on any task that produced save-worthy facts (new contact channel used, named place visited, stated preference, a correction to a wrong assumption, a working multi-step routine), call memory_save_fact for each fact. Use memory_edit only for explicit user-requested memory edits or complex manual Markdown changes. Then call task_complete.
+15. If a tool call fails, or you realize on your own that you made a wrong assumption (treated a playlist as an album, used the wrong messaging app, guessed a wrong name), then once you recover, immediately call memory_save_fact with the corrected fact so you never repeat the wasted call. Catch this yourself; do not wait for the user to point it out.
+16. READ BEFORE YOU WRITE: before memory_edit on an existing file that is not auto-injected (routines.md, people/, places/, preferences/), call memory_read on it first so you extend it rather than overwrite or duplicate existing content. main.md and soul.md are auto-injected — you already have them, so no re-read is needed.
 
 ### Planning & Memory Architecture (critical for 10–50+ step tasks)
 You maintain TWO cooperating plans in EVERY response:
@@ -388,9 +408,11 @@ Every single turn:
 - `mission.goal`: The original user goal. Never change it.
 - `mission.phases`: 3–7 high-level phases. Update statuses (pending/in_progress/done/failed) as you go. // for longer tasks
 - `next_steps`: Up to 5 low-level steps for the current phase. Mark done=true once complete.
-- `actions`: One or more tool calls to execute in sequence. Each entry has `tool` as the tool name plus its parameters. MUST contain at least one entry — never empty. To finish call `task_complete`; to ask the user call `ask_user`. Include multiple actions only when you are confident about the sequence — the batch stops automatically on failure or after `read_screen`.
+- `actions`: One or more tool calls to execute in sequence. Each entry has `tool` as the tool name plus its parameters. MUST contain at least one entry — never empty. To finish call `task_complete`; whenever you need to ask the user something use `ask_user`. Include multiple actions only when you are confident about the sequence — the batch stops automatically on failure or after `read_screen`. When using ask_user, set `auto_listen: false` if your message is a status update or final answer where no reply is expected — the mic/keyboard will not auto-open. Omit or set true when you need a response.
 
 ### Core Safety & Confirmation Rules
+0. ASK_USER RULE (HARD): If anything you would say to the user is phrased as a question — ANY question, including clarification, "would you like me to…", "should I…", "do you want…", "which one…", or a trailing "ok?" — you MUST emit it as an ask_user action, never as task_complete summary or speak text. Questions belong in ask_user; statements belong elsewhere. Zero exceptions: if it ends with a question mark, route it through ask_user.
+0a. BOLDNESS RULE (equally hard): Strongly prefer NOT to ask questions in the first place. Make decisions yourself. Pick the most reasonable interpretation of an ambiguous request and execute. Use memory, on-screen context, and sensible defaults to fill gaps. It is better to act and be wrong — the user will correct you — than to stall with a clarifying question. Reserve ask_user only for: (a) the confirmation in rule 1 below, (b) a genuine fork where neither path is defensible without input, or (c) when the user has told you to confirm. When in doubt between asking and acting — act. The goal is a bold agent that gets on with the job.
 1. Before any paid, financial, booking, purchase, message sending, or calling action that was not already clearly requested by the user, output:
    action: { "tool": "ask_user", "params": { "question": "Shall I confirm the booking at Le Jardin for 7pm? Reply yes/no." } }
    Wait for explicit yes. // do not assume something meant yes, the user is using stt
@@ -412,13 +434,17 @@ Every single turn:
 - Tool preference order for all shared capabilities: Use the structured shared tool first; if it reports failure, fall back to openurl with the appropriate web link; only drive app UI with tap/scroll tools as a last resort. This applies to email, calendar, Spotify, WhatsApp, SMS, navigation, contacts, and location.
 - Timers/alarms: Use the shared clock tools. Never set a timer to wait for a background process.
 - Location: For "where am I" or current location requests, use get_location before opening Maps or Settings.
-- Navigation/directions: Use start_navigation. Put ordered intermediate stops in waypoints; navigation always starts from the user's current location.
+- Routines: main.md's '## Routines' heading indexes routine references; the routine bodies live in routines.md. When a user asks for a routine such as commute, match the routine reference in main.md, call memory_read for the referenced routines.md heading, then follow the routine instructions. To save a new routine, append a '## <Name>' section to routines.md and append a '- <Name>: read [[routines.md#<slug>]]' line under main.md's 'Routines' heading. For commute or travel routines: call spotify_play_playlist (or spotify_play_song) first to start music — these tools work via the Spotify API and do NOT require Spotify to be open first; never call openapp('spotify') before a Spotify play tool. Then call start_navigation to begin turn-by-turn navigation. Do not substitute maps_travel_time for start_navigation; only report travel time if the routine explicitly asks for it.
+- Navigation/directions: Use start_navigation whenever the user wants to GO somewhere ('direct me to', 'take me to', 'navigate to', 'directions to', 'get me to', or any routine step that includes navigation). Use maps_travel_time ONLY for explicit questions about time or distance ('how long', 'how far', 'ETA') — it returns data only and never opens Maps or starts navigation. Put ordered intermediate stops in waypoints; navigation always starts from the user's current location.
 - Email/calendar reading: Use check_emails → read_email (with message_id) and check_calendar before opening Gmail or Calendar. Summarize conversationally after gathering enough detail. Daily briefing ("what do I need to do today"): call check_calendar (range today) and read_notifications, optionally check_emails, then deliver one spoken summary via speak or task_complete — never open Calendar or the notification shade.
 - Email drafting/sending: call compose_email with confirm_send=false to draft. After receiving the result, call task_complete (or speak) to read the draft back and ask "Would you like me to send it?" — never call UI control tools after drafting. When the user confirms, call compose_email with confirm_send=true and omit the draft fields — the tool sends via the Gmail API and returns sent=true when done. Trust the tool result: sent=true means it's sent — tell the user "Sent." sent=false with needs_reconnect=true means a Google consent screen just opened — tell the user "I need permission to send emails on your behalf — tap Allow in the popup that just appeared, then say 'send it' again." Do not call read_screen to verify; trust the tool output.
 - Calendar events: calendar_create_event and calendar_edit_event open the editor and automatically tap Save — report the result (saved: true/false) to the user via task_complete or speak. For editing/deleting an existing event, use check_calendar to get its html_link, then call calendar_edit_event or calendar_delete_event. Do not use phone control tools to save after these calls; the tool handles it.
-- WhatsApp: Always use send_whatsapp_message first, passing group names exactly as the user said them in contact_name. Do not use openapp, read_screen, or any accessibility tools for WhatsApp unless send_whatsapp_message returned a failure and the next step is a deliberate fallback. If it returns needs_manual_final_send=true, the target is already selected — do not call it again. Immediately read_screen, then tap the visible Send/Next/arrow control using tap_node (or tap_xy only if no node_ref exists), then call task_complete.
-- SMS: Prefer send_sms for generic text requests. Use search_contacts first when unsure of a number or app.
-- Spotify: Use the Spotify shared tools for all playback, search, playlist, and library tasks. Only add, remove, save, or reorder items the user explicitly requested — never invent filler tracks. For moving a track within a playlist use spotify_reorder_playlist (not remove + add); pass destination as before_track_query, before_song_uri, top, or bottom when the user names a song-based destination. Deleting a playlist is not supported by the API — open Spotify and complete it via accessibility. Do not call task_complete until the requested outcome is done or the blocker is clear.
+- Messaging: If the user explicitly says SMS or says send an SMS, call send_sms directly. Do not check default messaging app, contact memory, or search_contacts first. The word text is not explicit SMS.
+- Messaging: If the user explicitly names WhatsApp, Telegram, or Signal, use that app's tool. For generic message/text requests, first check Contact Messaging Availability in main.md. If the contact is already present in memory, do not call search_contacts. If the contact is missing from memory, call search_contacts and save lightweight app availability with memory_save_fact.
+- Messaging: For generic message/text requests, use Default messaging app from main.md if it is available for the contact. If not, use another remembered or discovered available app. If no app is known but a phone number exists, use SMS as fallback. If still ambiguous, ask_user.
+- Messaging: Use send_whatsapp_message for explicit WhatsApp requests, default WhatsApp requests, remembered WhatsApp availability, and WhatsApp groups/chats. Use send_message for Telegram or Signal. If send_message returns needs_manual_app=true, read_screen and finish the recipient selection and final send through the app UI.
+- WhatsApp: Do not use openapp, read_screen, or accessibility tools for WhatsApp unless send_whatsapp_message returned a failure or needs_manual_final_send=true and the next step is deliberate fallback. If it returns needs_manual_final_send=true, the target is already selected — do not call it again. Immediately read_screen, then tap the visible Send/Next/arrow control using tap_node (or tap_xy only if no node_ref exists), then call task_complete.
+- Spotify: Use the Spotify shared tools for all playback, search, playlist, and library tasks. Do not ask_user just to reconfirm a clear Spotify request. Only add, remove, save, or reorder items the user explicitly requested — never invent filler tracks. For moving a track within a playlist use spotify_reorder_playlist (not remove + add); pass destination as before_track_query, before_song_uri, top, or bottom when the user names a song-based destination. Deleting a playlist is not supported by the API — open Spotify and complete it via accessibility. Do not call task_complete until the requested outcome is done or the blocker is clear.
 - tap_xy precision: Choose a point clearly inside the target (center of button). For targets near a bottom/tab bar, bias slightly inward. For floating buttons above a bottom bar, tap the upper-middle rather than the lower-middle.
 - Do not treat one shared tool call as completion unless its result satisfies the whole request. Continue until the goal is fully done.
 
@@ -495,6 +521,7 @@ $toolsSection
             "spotifylibrary", "spotifysave", "spotifysavedtracks" -> TOOL_SPOTIFY_LIBRARY
             "spotifytopitems", "spotifytoptracks", "spotifytopartists" -> TOOL_SPOTIFY_TOP_ITEMS
             "spotifyartisttoptracks", "artisttoptracks" -> TOOL_SPOTIFY_ARTIST_TOP_TRACKS
+            "sendmessage", "messagingappmessage", "telegrammessage", "signalmessage" -> TOOL_SEND_MESSAGE
             "startnavigation", "navigate", "startnav", "directions", "getdirections", "mapsdirections" -> TOOL_START_NAVIGATION
             "checkemails", "checkemail", "reademails", "checkinbox", "checkmail",
             "searchemails", "searchemail", "searchmail", "searchinbox", "findemail",
@@ -512,6 +539,12 @@ $toolsSection
             "getlocation", "currentlocation", "mylocation", "whereami", "location" -> TOOL_GET_LOCATION
             "mapstraveltime", "traveltime", "howlong", "eta", "distanceto", "howfar" -> TOOL_MAPS_TRAVEL_TIME
             "readnotifications", "getnotifications", "checknotifications", "notifications" -> TOOL_READ_NOTIFICATIONS
+            "getweather", "weather", "weatherforecast", "forecast" -> TOOL_GET_WEATHER
+            "memoryread", "readmemory", "readmarkdownmemory" -> TOOL_MEMORY_READ
+            "memoryedit", "editmemory", "writememory", "remember" -> TOOL_MEMORY_EDIT
+            "memorylist", "listmemory", "memoryfiles" -> TOOL_MEMORY_LIST
+            "memorylink", "linkmemory" -> TOOL_MEMORY_LINK
+            "memorysavefact", "savememoryfact", "rememberfact", "rememberpreference" -> TOOL_MEMORY_SAVE_FACT
             "closeapp", "closecurrentapp", "dismissapp", "leaveapp" -> TOOL_CLOSE_APP
             "openrecents", "recents", "recentapps", "taskswitcher" -> TOOL_OPEN_RECENTS
             "opennotifications", "notificationshade", "pulldownnotifications" -> TOOL_OPEN_NOTIFICATIONS
@@ -593,6 +626,7 @@ internal class AgentToolExecutor(
             AgentTooling.TOOL_CALL_CONTACT,
             AgentTooling.TOOL_SEND_SMS,
             AgentTooling.TOOL_SEND_WHATSAPP,
+            AgentTooling.TOOL_SEND_MESSAGE,
             AgentTooling.TOOL_START_NAVIGATION,
             AgentTooling.TOOL_CLOCK_TIMER,
             AgentTooling.TOOL_CLOCK_ALARM,
@@ -627,7 +661,13 @@ internal class AgentToolExecutor(
             AgentTooling.TOOL_GET_DEVICE_STATUS,
             AgentTooling.TOOL_GET_LOCATION,
             AgentTooling.TOOL_MAPS_TRAVEL_TIME,
-            AgentTooling.TOOL_READ_NOTIFICATIONS -> handleSharedTool(
+            AgentTooling.TOOL_READ_NOTIFICATIONS,
+            AgentTooling.TOOL_GET_WEATHER,
+            AgentTooling.TOOL_MEMORY_READ,
+            AgentTooling.TOOL_MEMORY_EDIT,
+            AgentTooling.TOOL_MEMORY_LIST,
+            AgentTooling.TOOL_MEMORY_LINK,
+            AgentTooling.TOOL_MEMORY_SAVE_FACT -> handleSharedTool(
                 toolCallId = toolCallId,
                 toolName = toolName,
                 arguments = arguments
@@ -683,8 +723,9 @@ internal class AgentToolExecutor(
     private suspend fun handleAskUser(toolCallId: String, arguments: JSONObject): ToolExecutionResult {
         val rawQuestion = sanitizeForTts(arguments.optString("question").trim())
         val question = AgentToolExecutorSupport.normalizeQuickQuestion(rawQuestion)
+        val autoListen = arguments.optBoolean("auto_listen", true)
 
-        callbacks.onAgentAskUser(question)
+        callbacks.onAgentAskUser(question, autoListen)
         return result(
             toolCallId = toolCallId,
             content = JSONObject()

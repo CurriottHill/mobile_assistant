@@ -7,7 +7,7 @@ import android.view.accessibility.AccessibilityWindowInfo
 
 internal object AssistantUiTargeting {
     val IGNORED_PACKAGES = setOf(
-        "com.example.mobile_assistant",
+        "com.assistant",
         "com.google.android.inputmethod.latin",
         "com.samsung.android.honeyboard",
         "com.swiftkey.swiftkey",

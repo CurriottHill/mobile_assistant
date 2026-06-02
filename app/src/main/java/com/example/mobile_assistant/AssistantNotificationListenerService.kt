@@ -15,6 +15,16 @@ internal class AssistantNotificationListenerService : NotificationListenerServic
 
     override fun onListenerConnected() {
         instance = this
+        runCatching {
+            val existingKeys = synchronized(buffer) { buffer.mapNotNull { it.key }.toSet() }
+            val seedRecords = activeNotifications.orEmpty()
+                .mapNotNull(::recordFromStatusBarNotification)
+                .filter { it.key == null || it.key !in existingKeys }
+            synchronized(buffer) {
+                seedRecords.forEach { buffer.addLast(it) }
+                while (buffer.size > MAX_BUFFER) buffer.removeFirst()
+            }
+        }
     }
 
     override fun onListenerDisconnected() {
@@ -32,6 +42,13 @@ internal class AssistantNotificationListenerService : NotificationListenerServic
         synchronized(buffer) {
             buffer.addLast(record)
             while (buffer.size > MAX_BUFFER) buffer.removeFirst()
+        }
+    }
+
+    override fun onNotificationRemoved(sbn: StatusBarNotification?) {
+        val key = sbn?.key ?: return
+        synchronized(buffer) {
+            buffer.removeAll { it.key == key }
         }
     }
 

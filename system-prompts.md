@@ -109,8 +109,9 @@ Tools are sent as a JSON array alongside the prompt. Listed below in the order t
 |---|---|---|---|
 | `openapp` | name | — | Open an installed app by lowercase name. |
 | `open_notifications` | — | — | Pull down the notification shade. |
+| `read_screen` | — | — | Read the current foreground app and return a fresh accessibility tree plus screenshot. |
 | `ask_user` | question | — | Ask the user a question only when critical info is missing. |
-| `use_phone` | task | — | Delegate a multi-step task to the phone agent. The app ignores the task text and passes the user's original wording. |
+| `use_phone` | goal | — | Delegate a phone task that chat cannot handle directly. The phone agent receives live UI control tools (`read_screen`, `openapp`, `tap_node`, `tap_xy`, scrolling, swiping, typing, back/home, notifications, find_text) plus structured tools for navigation, clocks, expanded Spotify playlist/library/search/edit work, Gmail, Calendar, device controls, contacts, messaging, location, weather, web, clipboard, apps, notifications, and memory. |
 
 ---
 

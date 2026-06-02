@@ -65,6 +65,7 @@ internal object SharedToolSchemas {
     const val TOOL_SPOTIFY_ARTIST_TOP_TRACKS = "spotify_artist_top_tracks"
     const val TOOL_SEND_SMS = "send_sms"
     const val TOOL_SEND_WHATSAPP = "send_whatsapp_message"
+    const val TOOL_SEND_MESSAGE = "send_message"
     const val TOOL_START_NAVIGATION = "start_navigation"
     const val TOOL_SPOTIFY_CREATE_PLAYLIST = "spotify_create_playlist"
     const val TOOL_CHECK_EMAILS = "check_emails"
@@ -81,6 +82,12 @@ internal object SharedToolSchemas {
     const val TOOL_GET_LOCATION = "get_location"
     const val TOOL_MAPS_TRAVEL_TIME = "maps_travel_time"
     const val TOOL_READ_NOTIFICATIONS = "read_notifications"
+    const val TOOL_GET_WEATHER = "get_weather"
+    const val TOOL_MEMORY_READ = "memory_read"
+    const val TOOL_MEMORY_EDIT = "memory_edit"
+    const val TOOL_MEMORY_LIST = "memory_list"
+    const val TOOL_MEMORY_LINK = "memory_link"
+    const val TOOL_MEMORY_SAVE_FACT = "memory_save_fact"
     private val sharedToolNames = setOf(
         TOOL_SEARCH_WEB,
         TOOL_CALL_CONTACT,
@@ -105,6 +112,7 @@ internal object SharedToolSchemas {
         TOOL_SPOTIFY_ARTIST_TOP_TRACKS,
         TOOL_SEND_SMS,
         TOOL_SEND_WHATSAPP,
+        TOOL_SEND_MESSAGE,
         TOOL_START_NAVIGATION,
         TOOL_SPOTIFY_CREATE_PLAYLIST,
         TOOL_CHECK_EMAILS,
@@ -120,7 +128,13 @@ internal object SharedToolSchemas {
         TOOL_GET_DEVICE_STATUS,
         TOOL_GET_LOCATION,
         TOOL_MAPS_TRAVEL_TIME,
-        TOOL_READ_NOTIFICATIONS
+        TOOL_READ_NOTIFICATIONS,
+        TOOL_GET_WEATHER,
+        TOOL_MEMORY_READ,
+        TOOL_MEMORY_EDIT,
+        TOOL_MEMORY_LIST,
+        TOOL_MEMORY_LINK,
+        TOOL_MEMORY_SAVE_FACT
     )
 
     private fun searchWebTool(): FunctionToolSchema = FunctionToolSchema(
@@ -143,7 +157,7 @@ internal object SharedToolSchemas {
 
     private fun spotifyPlaySongTool(): FunctionToolSchema = FunctionToolSchema(
         name = TOOL_SPOTIFY_PLAY_SONG,
-        description = "Start Spotify playback for a song. Search by song title, artist, or provide a direct Spotify track URI or URL. Spotify must already be connected in the app.",
+        description = "Start Spotify playback for a song via the Spotify API. Does not require Spotify to be open — the tool starts playback directly without opening the app. Search by song title, artist, or provide a direct Spotify track URI or URL.",
         properties = mapOf(
             "query" to stringToolProperty("Song title, artist, or a direct Spotify track URI or URL.")
         ),
@@ -152,7 +166,7 @@ internal object SharedToolSchemas {
 
     private fun spotifyPlayAlbumTool(): FunctionToolSchema = FunctionToolSchema(
         name = TOOL_SPOTIFY_PLAY_ALBUM,
-        description = "Start Spotify playback for an album. Search by album title, artist, or provide a direct Spotify album URI or URL. Spotify must already be connected in the app.",
+        description = "Start Spotify playback for an album via the Spotify API. Does not require Spotify to be open — the tool starts playback directly without opening the app. Search by album title, artist, or provide a direct Spotify album URI or URL.",
         properties = mapOf(
             "query" to stringToolProperty("Album title, artist, or a direct Spotify album URI or URL.")
         ),
@@ -161,7 +175,7 @@ internal object SharedToolSchemas {
 
     private fun spotifyPlayPlaylistTool(): FunctionToolSchema = FunctionToolSchema(
         name = TOOL_SPOTIFY_PLAY_PLAYLIST,
-        description = "Start Spotify playback for one of the user's Spotify playlists. Search only within the user's Spotify playlists, or provide a direct Spotify playlist URI or URL. Optionally set shuffle as part of the same request.",
+        description = "Start Spotify playback for one of the user's Spotify playlists via the Spotify API. Does not require Spotify to be open — the tool starts playback directly without opening the app. Never call openapp('spotify') before this tool. Search only within the user's Spotify playlists, or provide a direct Spotify playlist URI or URL. Optionally set shuffle as part of the same request.",
         properties = mapOf(
             "query" to stringToolProperty("Playlist name, or a direct Spotify playlist URI or URL."),
             "shuffle" to booleanToolProperty("Optional shuffle state to apply after playback starts.")
@@ -383,7 +397,7 @@ internal object SharedToolSchemas {
 
     private fun sendSmsTool(): FunctionToolSchema = FunctionToolSchema(
         name = TOOL_SEND_SMS,
-        description = "Send an SMS text message to a contact or phone number. Prefer this over send_whatsapp_message for any general 'send a message' or 'text' request unless the user explicitly asks for WhatsApp. Resolves the contact name to a phone number, then sends the message directly without opening any app.",
+        description = "Send an SMS text message to a contact or phone number. Use this for explicit SMS requests, or as fallback when memory/contact lookup does not show a preferred messaging app and a phone number is available. Do not assume generic 'text' means SMS; generic 'message' and 'text' requests must follow the default messaging rules from main.md first.",
         properties = mapOf(
             "contact_name" to stringToolProperty("Contact name or direct phone number to send the message to."),
             "message" to stringToolProperty("The text message to send.")
@@ -393,7 +407,7 @@ internal object SharedToolSchemas {
 
     private fun sendWhatsAppTool(): FunctionToolSchema = FunctionToolSchema(
         name = TOOL_SEND_WHATSAPP,
-        description = "Send a WhatsApp message to a contact, a phone number, OR a group/chat by name (e.g. 'the family group chat'). This is the required first tool for explicit WhatsApp message requests, including individual contacts and groups. Contacts can complete through a direct deep link. Groups or chats not in contacts are selected in WhatsApp's share picker with the message pre-filled, then the tool may return needs_manual_final_send=true so the phone agent can read the screen and manually press the final Send/Next control. Use this only when the user explicitly requests WhatsApp; for general 'send a message' or 'text' requests prefer send_sms. Never open WhatsApp or use manual accessibility steps before trying this tool. Never tell the user to tap send; if it cannot complete it will say so.",
+        description = "Send a WhatsApp message to a contact, a phone number, OR a group/chat by name (e.g. 'the family group chat'). Use this for explicit WhatsApp requests, for generic message/text requests when main.md says WhatsApp is the default and memory says the contact has WhatsApp, or when remembered/contact lookup availability says WhatsApp is the best available app. Contacts can complete through a direct deep link. Groups or chats not in contacts are selected in WhatsApp's share picker with the message pre-filled, then the tool may return needs_manual_final_send=true so the phone agent can read the screen and manually press the final Send/Next control. Never open WhatsApp or use manual accessibility steps before trying this tool. Never tell the user to tap send; if it cannot complete it will say so.",
         properties = mapOf(
             "contact_name" to stringToolProperty("Contact name, group/chat name, or direct phone number to send the WhatsApp message to. A group or chat name (even phrased like 'the family group chat') is accepted."),
             "message" to stringToolProperty("The message to send.")
@@ -401,9 +415,27 @@ internal object SharedToolSchemas {
         required = listOf("contact_name", "message")
     )
 
+    private fun sendMessageTool(): FunctionToolSchema = FunctionToolSchema(
+        name = TOOL_SEND_MESSAGE,
+        description = "Best-effort send flow for app-based messaging beyond SMS and WhatsApp. Supported apps: telegram and signal. Use this for explicit Telegram/Signal requests, or generic message/text requests when main.md/contact memory says that app is the best available option. If direct targeting is unavailable, this returns needs_manual_app=true so the phone agent can finish recipient selection and sending through the app UI.",
+        properties = mapOf(
+            "app" to enumStringToolProperty(
+                description = "Messaging app to use.",
+                values = listOf("telegram", "signal")
+            ),
+            "target" to stringToolProperty("Recipient contact name, phone number, username, or group/chat name."),
+            "message" to stringToolProperty("The message text to send."),
+            "target_kind" to enumStringToolProperty(
+                description = "Optional hint for target interpretation.",
+                values = listOf("contact", "phone", "username", "group")
+            )
+        ),
+        required = listOf("app", "target", "message")
+    )
+
     private fun startNavigationTool(): FunctionToolSchema = FunctionToolSchema(
         name = TOOL_START_NAVIGATION,
-        description = "Start Google Maps turn-by-turn navigation to a destination, optionally via ordered intermediate stops, without opening or driving the Maps UI. Use this for any 'navigate to', 'directions to', 'direct me to', 'take me to', or 'route me to' request, including multi-stop trips described with words like 'via' or 'with a stop in'. Navigation starts from the user's current location.",
+        description = "Start Google Maps turn-by-turn navigation to a destination, optionally via ordered intermediate stops, without opening or driving the Maps UI. Use this whenever the user wants to GO somewhere: 'navigate to', 'directions to', 'direct me to', 'take me to', 'route me to', 'get me to', 'let's go to', or any phrasing that means starting a journey. This is the correct tool even when the user says 'directions' — if they want to travel, use this, not maps_travel_time. Multi-stop trips described with 'via' or 'with a stop in' also use this tool. Navigation always starts from the user's current location.",
         properties = mapOf(
             "destination" to stringToolProperty("Final destination as an address, place name, or 'lat,lng'."),
             "waypoints" to arrayOfStringsToolProperty("Ordered intermediate stops to pass through, in travel order, before the destination."),
@@ -489,13 +521,75 @@ internal object SharedToolSchemas {
 
     private fun searchContactsTool(): FunctionToolSchema = FunctionToolSchema(
         name = TOOL_SEARCH_CONTACTS,
-        description = "Find people in the user's contacts by name or number substring. Returns phone numbers, emails, and which messaging apps (WhatsApp/Telegram/Signal) each contact has. Use this before send_whatsapp_message or call_contact, or to answer 'what is X's number' or 'is Y on WhatsApp'.",
+        description = "Find people in the user's contacts by name or number substring. Returns phone numbers, emails, and which messaging apps (WhatsApp/Telegram/Signal) each contact has. For generic message/text requests, use this only when Contact Messaging Availability in main.md does not already contain the contact. After lookup, save useful messaging app availability with memory_save_fact. Use it before call_contact when contact identity or number is unclear.",
         properties = mapOf(
             "query" to stringToolProperty("Name or number substring to search for."),
             "limit" to integerToolProperty("Maximum contacts to return. Defaults to 10."),
             "app" to stringToolProperty("Optional messaging app filter; only return contacts that have this app (whatsapp, telegram, signal).")
         ),
         required = listOf("query")
+    )
+
+    private fun memoryReadTool(): FunctionToolSchema = FunctionToolSchema(
+        name = TOOL_MEMORY_READ,
+        description = "Read an allowed Markdown memory file or heading. Use this when main.md references another file such as routines.md, or when you need durable context that is not already injected. There is no memory_open tool.",
+        properties = mapOf(
+            "path" to stringToolProperty("Allowed memory path, for example 'routines.md' or 'people/alex.md'. A '#heading' suffix is also accepted."),
+            "heading" to stringToolProperty("Optional heading or heading slug to read from the file.")
+        ),
+        required = listOf("path")
+    )
+
+    private fun memoryEditTool(): FunctionToolSchema = FunctionToolSchema(
+        name = TOOL_MEMORY_EDIT,
+        description = "Edit an allowed Markdown memory file for explicit user-requested memory edits or complex manual Markdown changes. For ordinary new durable facts, prefer memory_save_fact so the memory saver can read existing memory and dedupe first. Targets: people/<slug>.md for contact channels and personal facts; places/<slug>.md for named locations; preferences/<slug>.md for stated likes/defaults and corrections; routines.md for working multi-step task patterns worth replaying. main.md edits only for long-standing personal facts and routine references. soul.md edits only when the user explicitly asks to change assistant personality. Do not store raw email/notification/webpage/message bodies — store the durable fact extracted from them. Use create_if_missing=true when writing under approved subfolders for the first time. Before editing an existing file, memory_read it first (main.md and soul.md are already shown to you and are exempt) so you extend it rather than overwrite or duplicate content.",
+        properties = mapOf(
+            "path" to stringToolProperty("Allowed memory path."),
+            "mode" to enumStringToolProperty(
+                description = "Edit mode.",
+                values = listOf("append", "replace", "overwrite")
+            ),
+            "content" to stringToolProperty("Markdown content to write."),
+            "old_text" to stringToolProperty("Required for replace mode. Exact text to replace."),
+            "heading" to stringToolProperty("Optional heading or heading slug to edit within the file."),
+            "create_if_missing" to booleanToolProperty("Create the file if missing. Only allowed in approved memory folders, not as a new root file."),
+            "reason" to stringToolProperty("Brief reason for the memory change.")
+        ),
+        required = listOf("path", "mode", "content")
+    )
+
+    private fun memoryListTool(): FunctionToolSchema = FunctionToolSchema(
+        name = TOOL_MEMORY_LIST,
+        description = "List allowed Markdown memory files and their headings without reading full contents.",
+        properties = mapOf(
+            "prefix" to stringToolProperty("Optional allowed path prefix, such as 'people' or 'routines'.")
+        )
+    )
+
+    private fun memoryLinkTool(): FunctionToolSchema = FunctionToolSchema(
+        name = TOOL_MEMORY_LINK,
+        description = "Add a Markdown wiki-style link from one allowed memory file to another allowed memory file.",
+        properties = mapOf(
+            "from_path" to stringToolProperty("Allowed source memory path."),
+            "to_path" to stringToolProperty("Allowed target memory path."),
+            "label" to stringToolProperty("Optional label for the link.")
+        ),
+        required = listOf("from_path", "to_path")
+    )
+
+    private fun memorySaveFactTool(): FunctionToolSchema = FunctionToolSchema(
+        name = TOOL_MEMORY_SAVE_FACT,
+        description = "Ask the memory saver to decide whether a likely durable fact is new, then save it if useful. Use this on demand only when the current turn contains a user preference, default, correction, contact fact, named place, routine, or long-standing personal fact worth remembering. The tool reads relevant existing memory first and uses GPT-5 Mini to dedupe and decide. Do not call it on every prompt. Do not pass raw email, notification, webpage, or message bodies; pass only the durable fact.",
+        properties = mapOf(
+            "kind" to enumStringToolProperty(
+                description = "Type of memory to consider.",
+                values = listOf("preference", "person", "place", "routine", "main")
+            ),
+            "subject" to stringToolProperty("Topic, person name, place name, routine name, or main memory field subject."),
+            "fact" to stringToolProperty("The concise durable fact or correction that might be worth saving."),
+            "context" to stringToolProperty("Optional short context explaining where the fact came from or whether the user explicitly asked to remember it.")
+        ),
+        required = listOf("kind", "subject", "fact")
     )
 
     private fun setVolumeTool(): FunctionToolSchema = FunctionToolSchema(
@@ -548,7 +642,7 @@ internal object SharedToolSchemas {
 
     private fun mapsTravelTimeTool(): FunctionToolSchema = FunctionToolSchema(
         name = TOOL_MAPS_TRAVEL_TIME,
-        description = "Get travel time and distance in miles to a place WITHOUT opening Maps. Use for 'how long to get to X', 'how far is Y', 'how many miles to Z'. Origin defaults to the user's current location, so location access may need to be enabled first. By default this prefers precise traffic aware timing for live current-location requests. If the user explicitly agrees to an approximate fallback after a precise failure, set allow_approximate=true. This returns data only and never launches navigation; use start_navigation to actually navigate.",
+        description = "Get travel time and distance in miles to a place WITHOUT opening Maps. ONLY use this when the user asks a question about time or distance — 'how long to get to X', 'how far is Y', 'how many miles to Z', 'what's the ETA to X'. Do NOT use this when the user wants to actually go somewhere ('direct me to', 'take me to', 'navigate to', 'directions to', 'get me to') — use start_navigation for those. Origin defaults to the user's current location. By default this prefers precise traffic-aware timing. If the user explicitly agrees to an approximate fallback after a precise failure, set allow_approximate=true. This returns data only and never launches navigation.",
         properties = mapOf(
             "destination" to stringToolProperty("Destination as an address or place name."),
             "origin" to stringToolProperty("Optional origin address or place name. Defaults to the user's current location."),
@@ -572,12 +666,28 @@ internal object SharedToolSchemas {
         )
     )
 
+    private fun getWeatherTool(): FunctionToolSchema = FunctionToolSchema(
+        name = TOOL_GET_WEATHER,
+        description = "Get weather for a location. Returns current conditions and a daily forecast. Use for 'what's the weather', 'will it rain tomorrow', 'temperature on Friday', etc. Report only what the user asked about — do not dump all fields.",
+        properties = mapOf(
+            "location" to stringToolProperty("City name, address, or 'here' to use current device location."),
+            "days" to integerToolProperty("Number of upcoming forecast days to include (0 = today only, 1–7). Default 1.")
+        ),
+        required = listOf("location")
+    )
+
     fun agentFunctionTools(): List<FunctionToolSchema> {
         return listOf(
             searchWebTool(),
+            memoryReadTool(),
+            memoryEditTool(),
+            memoryListTool(),
+            memoryLinkTool(),
+            memorySaveFactTool(),
             callContactTool(),
             sendSmsTool(),
             sendWhatsAppTool(),
+            sendMessageTool(),
             startNavigationTool(),
             clockTimerTool(),
             clockAlarmTool(),
@@ -612,26 +722,39 @@ internal object SharedToolSchemas {
             getDeviceStatusTool(),
             getLocationTool(),
             mapsTravelTimeTool(),
-            readNotificationsTool()
+            readNotificationsTool(),
+            getWeatherTool()
         )
     }
 
     fun chatFunctionTools(): List<FunctionToolSchema> {
         return listOf(
             searchWebTool(),
+            memoryReadTool(),
+            memoryEditTool(),
+            memoryListTool(),
+            memoryLinkTool(),
+            memorySaveFactTool(),
             callContactTool(),
             sendSmsTool(),
+            sendWhatsAppTool(),
+            sendMessageTool(),
             mapsTravelTimeTool(),
             spotifyPlaySongTool(),
             spotifyPlayAlbumTool(),
+            spotifyPlayPlaylistTool(),
             spotifyGetPlaybackStateTool(),
             spotifyControlPlaybackTool(),
             spotifySetPlaybackOptionsTool(),
             listAppsTool(),
             clipboardGetTool(),
             clipboardSetTool(),
+            searchContactsTool(),
             getLocationTool(),
-            readNotificationsTool()
+            readNotificationsTool(),
+            checkEmailsTool(),
+            checkCalendarTool(),
+            getWeatherTool()
         )
     }
 

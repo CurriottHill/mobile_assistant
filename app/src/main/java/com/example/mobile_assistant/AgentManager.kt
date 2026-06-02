@@ -5,6 +5,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
+import android.util.Log
 
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -25,7 +26,8 @@ class AgentManager(
     private val appContext: Context,
     private val scope: CoroutineScope,
     private val callbacks: AgentCallbacks,
-    private val screenReader: () -> String?
+    private val screenReader: () -> String?,
+    private val usageTaskIdProvider: () -> String? = { null }
 ) {
 
     private enum class SearchProvider {
@@ -48,8 +50,17 @@ class AgentManager(
 
     private data class ExecutedChatTool(
         val name: String,
+        val rawArgs: String,
         val argsDisplay: String,
-        val resultDisplay: String
+        val resultDisplay: String,
+        val success: Boolean
+    )
+
+    private data class ToolCallTelemetry(
+        val name: String,
+        val rawArgs: String,
+        val success: Boolean,
+        val resultSummary: String
     )
 
     private sealed interface ChatLoopOutcome {
@@ -62,6 +73,7 @@ class AgentManager(
         data class FinalResponse(
             val response: String,
             val isAskUser: Boolean = false,
+            val autoListen: Boolean = true,
             val toolResults: JSONArray? = null,
             override val executedTools: List<ExecutedChatTool> = emptyList()
         ) : ChatLoopOutcome
@@ -76,21 +88,28 @@ class AgentManager(
         fun onAgentThinkingStarted(userMessage: String)
         fun onAgentThinkingFinished()
         fun onAgentResponse(response: String)
-        fun onToolCalled(toolName: String) {}
+        fun onToolCalled(toolName: String, argsJson: String = "") {}
         fun onAgentReasoning(text: String) {}
         fun onAgentUiAction(action: AssistantUiAction) {}
         fun onAgentSpeak(message: String)
         fun onAgentTaskComplete(summary: String)
-        fun onAgentAskUser(question: String)
+        fun onAgentAskUser(question: String, autoListen: Boolean = true)
+        fun onAgentCutoff(reason: String, message: String) {
+            onAgentResponse(message)
+        }
         fun onAgentApiKeyMissing()
         fun onAgentError(message: String? = null)
-        fun onAgentFallbackToOpenAi() {}
+        fun onAgentProviderTag(providerLabel: String) {}
+        fun onAgentFallbackToOpenAi() {
+            onAgentProviderTag("ChatGPT")
+        }
     }
 
     private val chatClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(180, TimeUnit.SECONDS)
         .build()
+    private val backendClient by lazy { MobileBackendClient(appContext) }
 
     private val spotifyService = SpotifyService(appContext)
     private val clockToolService = ClockToolService(appContext)
@@ -137,6 +156,14 @@ class AgentManager(
     private val deviceMediaToolService = DeviceMediaToolService(appContext)
     private val currentLocationToolService = CurrentLocationToolService(appContext)
     private val notificationToolService = NotificationToolService(appContext)
+    private val weatherToolService = WeatherToolService(appContext)
+    private val memoryRepository = MemoryRepository(appContext)
+    private val memoryToolService = MemoryToolService(
+        memoryRepository,
+        OpenAiMemorySaveFactReviewer(onUsageRecorded = ::recordMemoryReviewUsage)
+    )
+    private val memorySaveLog = MemorySaveLog()
+    private val genericMessagingToolService = GenericMessagingToolService(appContext)
     private val mapsTravelTimeToolService = MapsTravelTimeToolService(
         context = appContext,
         searchWeb = { query ->
@@ -181,7 +208,12 @@ class AgentManager(
         deviceMediaToolService = deviceMediaToolService,
         currentLocationToolService = currentLocationToolService,
         mapsTravelTimeToolService = mapsTravelTimeToolService,
-        notificationToolService = notificationToolService
+        notificationToolService = notificationToolService,
+        weatherToolService = weatherToolService,
+        memoryToolService = memoryToolService,
+        genericMessagingToolService = genericMessagingToolService,
+        memoryRepository = memoryRepository,
+        memorySaveLog = memorySaveLog
     )
 
     @Volatile
@@ -406,6 +438,7 @@ class AgentManager(
     private var lastTappedLabel: String? = null
     private var consecutiveSameToolCount = 0
     private var lastToolCallSignature: String? = null
+    private val displayedProviderTags = mutableSetOf<String>()
 
     fun sendToAgent(message: String) {
         val agentApiKey = agentProviderApiKey()
@@ -417,6 +450,7 @@ class AgentManager(
         isPaused = false
         lastAgentApiKey = agentApiKey
         chatJob?.cancel()
+        resetProviderTags()
         callbacks.onAgentThinkingStarted(message)
 
         if (shouldContinueCurrentAgentTask()) {
@@ -482,11 +516,12 @@ class AgentManager(
         isPaused = false
         lastAgentApiKey = agentApiKey
         chatJob?.cancel()
+        resetProviderTags()
         callbacks.onAgentThinkingStarted(message)
 
         capturedInitialScreenDump = screenReader()?.takeIf { it.isNotBlank() }
         EvalRecorder.active?.markAgentInvoked()
-        resetAgentState(message)
+        resetAgentState(message, mapsWasActive = isMapsInForeground())
         seedInitialScreenDump()
         latestUserMessage = message
         // Eval harness path bypasses chat — keep unified history in sync with the user utterance.
@@ -536,8 +571,10 @@ class AgentManager(
         pendingTurnBlocks.clear()
         conversation.addUser(message)
 
+        var emptyResponseRetries = 0
         for (round in 0 until CHAT_MAX_DIRECT_TOOL_ROUNDS) {
             val result = callChat(chatApiKey)
+            val modelCallId = result.optString("_marvin_model_call_id").takeIf { it.isNotBlank() }
             result.optJSONArray("assistant_content")
                 ?.takeIf { it.length() > 0 }
                 ?.let { pendingTurnBlocks.add(JSONObject().put("role", "assistant").put("content", JSONArray(it.toString()))) }
@@ -546,17 +583,20 @@ class AgentManager(
             val toolCalls = result.optJSONArray("tool_calls")
 
             if (toolCalls != null && toolCalls.length() > 0) {
+                emptyResponseRetries = 0
                 when (val outcome = handleChatToolLoopTurn(toolCalls, fallbackTask = message)) {
                     is ChatLoopOutcome.Continue -> {
+                        updateModelCallTools(modelCallId, outcome.executedTools)
                         pendingTurnBlocks.add(JSONObject().put("role", "user").put("content", outcome.toolResults))
                     }
 
                     is ChatLoopOutcome.FinalResponse -> {
+                        updateModelCallTools(modelCallId, outcome.executedTools)
                         outcome.executedTools.forEach { conversation.addToolCall(it.name, it.argsDisplay, it.resultDisplay) }
                         conversation.addAssistant(outcome.response)
                         pendingTurnBlocks.clear()
                         if (outcome.isAskUser) {
-                            callbacks.onAgentAskUser(outcome.response)
+                            callbacks.onAgentAskUser(outcome.response, outcome.autoListen)
                         } else {
                             callbacks.onAgentResponse(outcome.response)
                         }
@@ -564,12 +604,13 @@ class AgentManager(
                     }
 
                     is ChatLoopOutcome.HandoffToPhone -> {
+                        updateModelCallTools(modelCallId, outcome.executedTools)
                         outcome.executedTools.forEach { conversation.addToolCall(it.name, it.argsDisplay, it.resultDisplay) }
                         val task = outcome.task.ifBlank { message }
                         conversation.addAssistant("Let me do that on your phone.")
                         pendingTurnBlocks.clear()
                         EvalRecorder.active?.markAgentInvoked()
-                        resetAgentState(task)
+                        resetAgentState(task, mapsWasActive = isMapsInForeground())
                         seedInitialScreenDump()
                         // Goal is the Haiku-resolved task; keep latestUserMessage as the raw user input.
                         latestUserMessage = message
@@ -579,18 +620,56 @@ class AgentManager(
                     }
                 }
             } else if (content.isNotBlank()) {
+                emptyResponseRetries = 0
                 val responseText = sanitizeForTts(content)
                 conversation.addAssistant(responseText)
                 pendingTurnBlocks.clear()
                 callbacks.onAgentResponse(responseText)
                 return
             } else {
-                break
+                Log.w("AgentManager", "Chat returned empty response (round=$round): $result")
+                if (emptyResponseRetries >= CHAT_EMPTY_RESPONSE_RETRY_CAP) break
+                emptyResponseRetries++
+                queueChatSystemNudge(
+                    "System note: your last response was empty — no text and no tool call. " +
+                        "Please reply to the user, or call a tool if you need information. Continue now."
+                )
             }
         }
 
+        // Finalize fallback: force one plain-text answer.
+        queueChatSystemNudge(
+            "System note: please respond to the user now in plain text. Do not call any more tools."
+        )
+        val finalize = runCatching { callChat(chatApiKey) }.getOrNull()
+        val finalText = finalize?.optString("content", "")
+            ?.takeIf { it != "null" }?.trim()
+            .orEmpty()
         pendingTurnBlocks.clear()
-        callbacks.onAgentResponse("I stopped early before finishing. Say try again to continue.")
+        if (finalText.isNotBlank()) {
+            val responseText = sanitizeForTts(finalText)
+            conversation.addAssistant(responseText)
+            callbacks.onAgentResponse(responseText)
+        } else {
+            callbacks.onAgentResponse("Sorry — I didn't catch a response. Try asking again.")
+        }
+    }
+
+    // Append a user-role nudge to pendingTurnBlocks. Anthropic requires strict
+    // role alternation, so insert a placeholder assistant block first when the
+    // last queued/historical message is also user (e.g. the model just returned
+    // an empty turn, so no assistant block was appended).
+    private fun queueChatSystemNudge(text: String) {
+        val lastPendingRole = pendingTurnBlocks.lastOrNull()?.optString("role")
+        val needsAssistantBridge = lastPendingRole == null || lastPendingRole == "user"
+        if (needsAssistantBridge) {
+            pendingTurnBlocks.add(
+                JSONObject().put("role", "assistant").put("content", "(no response)")
+            )
+        }
+        pendingTurnBlocks.add(
+            JSONObject().put("role", "user").put("content", text)
+        )
     }
 
     private suspend fun handleChatToolLoopTurn(
@@ -604,8 +683,10 @@ class AgentManager(
             executed.add(
                 ExecutedChatTool(
                     name = toolName,
+                    rawArgs = rawArgs,
                     argsDisplay = ConversationHistory.formatToolArgsForDisplay(toolName, rawArgs),
-                    resultDisplay = ConversationHistory.formatToolResultForHistory(toolName, resultContent.toString())
+                    resultDisplay = ConversationHistory.formatToolResultForHistory(toolName, resultContent.toString()),
+                    success = resultContent.optBoolean("ok", false)
                 )
             )
         }
@@ -664,10 +745,43 @@ class AgentManager(
                 continue
             }
 
+            if (toolName == ChatPrompt.TOOL_READ_SCREEN) {
+                callbacks.onToolCalled(toolName, rawArgs)
+                val result = toolExecutor.executeToolCall(toolCall)
+                val content = JSONObject(result.toolMessage.optString("content", "{}"))
+                recordToolOutcome(toolName = toolName, rawArgs = rawArgs, content = content)
+                val chatContent = JSONObject(content.toString())
+                val imageDataUrl = chatContent.optString("image_data_url").takeIf { it.isNotBlank() }
+                if (imageDataUrl != null) {
+                    chatContent.remove("image_data_url")
+                    chatContent.put("screenshot_captured", true)
+                }
+                toolResults.put(
+                    chatReadScreenToolResultBlock(
+                        toolUseId = toolUseId,
+                        resultContent = chatContent,
+                        imageDataUrl = imageDataUrl,
+                        isError = !content.optBoolean("ok", false)
+                    )
+                )
+                record(toolName, rawArgs, chatContent)
+                if (!content.optBoolean("ok", false)) {
+                    ChatToolLoopSupport.appendSkippedToolResults(
+                        toolCalls = toolCalls,
+                        startIndex = index + 1,
+                        toolResults = toolResults,
+                        reason = "Skipped because an earlier tool call in this response already failed."
+                    )
+                    return ChatLoopOutcome.Continue(toolResults, executed)
+                }
+                continue
+            }
+
             if (toolName == ChatPrompt.TOOL_ASK_USER) {
-                callbacks.onToolCalled(toolName)
+                callbacks.onToolCalled(toolName, rawArgs)
                 val question = arguments.optString("question").trim()
                 val normalized = AgentToolExecutorSupport.normalizeQuickQuestion(question)
+                val autoListen = arguments.optBoolean("auto_listen", true)
                 val resultContent = JSONObject()
                     .put("tool", ChatPrompt.TOOL_ASK_USER)
                     .put("ok", true)
@@ -689,13 +803,14 @@ class AgentManager(
                 return ChatLoopOutcome.FinalResponse(
                     response = sanitizeForTts(normalized),
                     isAskUser = true,
+                    autoListen = autoListen,
                     toolResults = toolResults,
                     executedTools = executed
                 )
             }
 
             if (toolName == ChatPrompt.TOOL_USE_PHONE) {
-                callbacks.onToolCalled(toolName)
+                callbacks.onToolCalled(toolName, rawArgs)
                 val resolvedGoal = arguments.optString("goal").trim().ifBlank { fallbackTask }
                 val resultContent = JSONObject()
                     .put("tool", ChatPrompt.TOOL_USE_PHONE)
@@ -720,7 +835,7 @@ class AgentManager(
             }
 
             if (toolName in DIRECT_CHAT_SHARED_TOOLS) {
-                callbacks.onToolCalled(toolName)
+                callbacks.onToolCalled(toolName, rawArgs)
                 val execution = sharedToolExecutor.execute(toolName, arguments)
                 if (execution == null) {
                     val errorContent = ChatToolLoopSupport.errorResultContent(
@@ -792,8 +907,33 @@ class AgentManager(
         }
     }
 
+    private fun chatReadScreenToolResultBlock(
+        toolUseId: String,
+        resultContent: JSONObject,
+        imageDataUrl: String?,
+        isError: Boolean
+    ): JSONObject {
+        val block = JSONObject()
+            .put("type", "tool_result")
+            .put("tool_use_id", toolUseId)
+            .put("is_error", isError)
+
+        val imageBlock = imageDataUrl?.let(::anthropicImageBlock)
+        if (imageBlock == null) {
+            block.put("content", resultContent.toString())
+        } else {
+            block.put(
+                "content",
+                JSONArray()
+                    .put(anthropicTextBlock(resultContent.toString()))
+                    .put(imageBlock)
+            )
+        }
+        return block
+    }
+
     private fun executeChatOpenApp(arguments: JSONObject): SharedChatToolResult {
-        callbacks.onToolCalled(ChatPrompt.TOOL_OPEN_APP)
+        callbacks.onToolCalled(ChatPrompt.TOOL_OPEN_APP, arguments.toString())
         val appName = arguments.optString("name").trim().lowercase()
         if (appName.isBlank()) {
             return SharedChatToolResult(
@@ -870,12 +1010,12 @@ class AgentManager(
         )
     }
 
-    private fun resetAgentState(currentGoal: String) {
+    private fun resetAgentState(currentGoal: String, mapsWasActive: Boolean = false) {
         latestScreenDump = null
         latestScreenRevision = null
         latestScreenshotDataUrl = null
         latestScreenshotRevision = null
-        agentState = emptyAgentState(currentGoal = currentGoal)
+        agentState = emptyAgentState(currentGoal = currentGoal).copy(mapsWasActive = mapsWasActive)
         toolCallLog.clear()
         evalTranscript.clear()
         lastUiChange = "new_user_request"
@@ -893,48 +1033,116 @@ class AgentManager(
         agentState = agentState.copy(lastTree = ScreenReader.fingerprintsForDump(dump))
     }
 
-    private fun agentProviderApiKey(): String = BuildConfig.ANTHROPIC_API_KEY.trim()
-
-    private suspend fun callChat(apiKey: String): JSONObject {
+    private fun isMapsInForeground(): Boolean {
+        val service = AssistantAccessibilityService.instance ?: return false
+        val root = service.getUnderlyingAppRoot() ?: return false
         return try {
-            callAnthropicChat(apiKey)
-        } catch (anthropicError: Exception) {
-            val result = callOpenAiChatFallback(anthropicError)
-            callbacks.onAgentFallbackToOpenAi()
-            result
+            root.packageName?.toString()?.trim() == "com.google.android.apps.maps"
+        } finally {
+            root.recycle()
         }
     }
 
-    private suspend fun callAnthropicChat(apiKey: String): JSONObject = withContext(Dispatchers.IO) {
+    private fun returnToMaps() {
+        val intent = appContext.packageManager
+            .getLaunchIntentForPackage("com.google.android.apps.maps") ?: return
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+        appContext.startActivity(intent)
+    }
+
+    private fun agentProviderApiKey(): String {
+        return BuildConfig.OPENROUTER_API_KEY.trim()
+            .ifBlank { BuildConfig.ANTHROPIC_API_KEY.trim() }
+            .ifBlank { BuildConfig.OPENAI_API_KEY.trim() }
+    }
+
+    private fun resetProviderTags() {
+        synchronized(displayedProviderTags) {
+            displayedProviderTags.clear()
+        }
+    }
+
+    private fun emitProviderTag(providerLabel: String) {
+        val shouldShow = synchronized(displayedProviderTags) {
+            displayedProviderTags.add(providerLabel)
+        }
+        if (shouldShow) {
+            scope.launch(Dispatchers.Main) {
+                callbacks.onAgentProviderTag(providerLabel)
+            }
+        }
+    }
+
+    private suspend fun callChat(apiKey: String): JSONObject {
+        val provider = appContext.getSharedPreferences("marvin_prefs", android.content.Context.MODE_PRIVATE)
+            .getString("pref_ai_provider", "anthropic")
+        return if (provider == "openai") {
+            callOpenAiChatDirect()
+        } else {
+            try {
+                callQwenChat()
+            } catch (qwenError: Exception) {
+                AgentModelConfig.deepSeekChatFallbackFor(ChatPrompt.MODEL)?.let { fallbackModel ->
+                    return try {
+                        callOpenRouterChat(fallbackModel, "DeepSeek")
+                    } catch (fallbackError: Exception) {
+                        fallbackError.addSuppressed(qwenError)
+                        throw fallbackError
+                    }
+                }
+                if (!AgentModelConfig.allowAnthropicChatFallbackFor(ChatPrompt.MODEL)) {
+                    throw qwenError
+                }
+                try {
+                    callAnthropicChat(AgentModelConfig.ANTHROPIC_CHAT_BACKUP_MODEL)
+                } catch (anthropicError: Exception) {
+                    anthropicError.addSuppressed(qwenError)
+                    callOpenAiChatFallback(anthropicError, AgentModelConfig.ANTHROPIC_CHAT_BACKUP_MODEL)
+                }
+            }
+        }
+    }
+
+    private suspend fun callQwenChat(): JSONObject {
+        return callOpenRouterChat(ChatPrompt.MODEL, "DeepSeek")
+    }
+
+    private suspend fun callOpenRouterChat(
+        model: String,
+        providerTag: String
+    ): JSONObject = withContext(Dispatchers.IO) {
+        val openRouterApiKey = BuildConfig.OPENROUTER_API_KEY.trim()
+        if (openRouterApiKey.isBlank()) throw IllegalStateException("OpenRouter API key not configured")
+
         activeSearchContext = SearchExecutionContext(
-            provider = SearchProvider.ANTHROPIC,
-            model = ChatPrompt.MODEL
+            provider = SearchProvider.OPENAI,
+            model = AgentModelConfig.OPENAI_WEB_SEARCH_MODEL
         )
         val requestPayload = JSONObject()
-            .put("model", ChatPrompt.MODEL)
+            .put("model", model)
             .put("max_tokens", CHAT_MAX_TOKENS)
-            .put("system", ChatPrompt.instructions())
-            .put("messages", buildAnthropicChatMessages())
-            .put("tools", ChatPrompt.buildAnthropicTools())
+            .put("messages", buildOpenAiChatMessages())
+            .put("tools", buildOpenAiChatTools())
+            .put("tool_choice", "auto")
 
         val body = requestPayload
             .toString()
             .toRequestBody("application/json".toMediaType())
 
         val request = Request.Builder()
-            .url(ANTHROPIC_MESSAGES_ENDPOINT)
-            .addHeader("x-api-key", apiKey)
-            .addHeader("anthropic-version", ANTHROPIC_VERSION)
+            .url(OPENROUTER_CHAT_COMPLETIONS_ENDPOINT)
+            .addHeader("Authorization", "Bearer $openRouterApiKey")
             .post(body)
             .build()
 
+        val startedAtMs = System.currentTimeMillis()
         chatClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 val responseBody = response.body?.string().orEmpty()
                 throw IllegalStateException(
                     AgentApiSupport.formatAgentApiError(
-                        providerLabel = "anthropic",
-                        model = ChatPrompt.MODEL,
+                        providerLabel = "openrouter",
+                        model = model,
                         statusCode = response.code,
                         responseBody = responseBody,
                         maxBodyChars = MAX_AGENT_ERROR_BODY_CHARS
@@ -942,13 +1150,20 @@ class AgentManager(
                 )
             }
             val responseJson = JSONObject(response.body?.string().orEmpty())
-            AgentApiSupport.parseAnthropicChatResult(responseJson)
+            val usageRecord = recordModelUsage(
+                "openrouter",
+                model,
+                responseJson,
+                durationMs = System.currentTimeMillis() - startedAtMs
+            )
+            emitProviderTag(providerTag)
+            attachModelCallId(AgentApiSupport.parseOpenAiChatCompletionResult(responseJson), usageRecord)
         }
     }
 
-    private suspend fun callOpenAiChatFallback(anthropicError: Exception): JSONObject = withContext(Dispatchers.IO) {
+    private suspend fun callOpenAiChatDirect(): JSONObject = withContext(Dispatchers.IO) {
         val openAiApiKey = BuildConfig.OPENAI_API_KEY.trim()
-        if (openAiApiKey.isBlank()) throw anthropicError
+        if (openAiApiKey.isBlank()) throw IllegalStateException("OpenAI API key not configured")
 
         val fallbackModel = AgentModelConfig.openAiFallbackModelFor(ChatPrompt.MODEL)
         activeSearchContext = SearchExecutionContext(
@@ -972,6 +1187,114 @@ class AgentManager(
             .post(body)
             .build()
 
+        val startedAtMs = System.currentTimeMillis()
+        chatClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val responseBody = response.body?.string().orEmpty()
+                throw IllegalStateException(
+                    AgentApiSupport.formatAgentApiError(
+                        providerLabel = "openai",
+                        model = fallbackModel,
+                        statusCode = response.code,
+                        responseBody = responseBody,
+                        maxBodyChars = MAX_AGENT_ERROR_BODY_CHARS
+                    )
+                )
+            }
+            val responseJson = JSONObject(response.body?.string().orEmpty())
+            val usageRecord = recordModelUsage(
+                "openai",
+                fallbackModel,
+                responseJson,
+                durationMs = System.currentTimeMillis() - startedAtMs
+            )
+            emitProviderTag("ChatGPT")
+            attachModelCallId(AgentApiSupport.parseOpenAiChatCompletionResult(responseJson), usageRecord)
+        }
+    }
+
+    private suspend fun callAnthropicChat(model: String): JSONObject = withContext(Dispatchers.IO) {
+        val apiKey = BuildConfig.ANTHROPIC_API_KEY.trim()
+        if (apiKey.isBlank()) throw IllegalStateException("Anthropic API key not configured")
+
+        activeSearchContext = SearchExecutionContext(
+            provider = SearchProvider.ANTHROPIC,
+            model = model
+        )
+        val requestPayload = JSONObject()
+            .put("model", model)
+            .put("max_tokens", CHAT_MAX_TOKENS)
+            .put("system", ChatPrompt.instructions(memoryPromptSnapshot()))
+            .put("messages", buildAnthropicChatMessages())
+            .put("tools", ChatPrompt.buildAnthropicTools())
+
+        val body = requestPayload
+            .toString()
+            .toRequestBody("application/json".toMediaType())
+
+        val request = Request.Builder()
+            .url(ANTHROPIC_MESSAGES_ENDPOINT)
+            .addHeader("x-api-key", apiKey)
+            .addHeader("anthropic-version", ANTHROPIC_VERSION)
+            .post(body)
+            .build()
+
+        val startedAtMs = System.currentTimeMillis()
+        chatClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                val responseBody = response.body?.string().orEmpty()
+                throw IllegalStateException(
+                    AgentApiSupport.formatAgentApiError(
+                        providerLabel = "anthropic",
+                        model = model,
+                        statusCode = response.code,
+                        responseBody = responseBody,
+                        maxBodyChars = MAX_AGENT_ERROR_BODY_CHARS
+                    )
+                )
+            }
+            val responseJson = JSONObject(response.body?.string().orEmpty())
+            val usageRecord = recordModelUsage(
+                "anthropic",
+                model,
+                responseJson,
+                durationMs = System.currentTimeMillis() - startedAtMs
+            )
+            emitProviderTag("Anthropic")
+            attachModelCallId(AgentApiSupport.parseAnthropicChatResult(responseJson), usageRecord)
+        }
+    }
+
+    private suspend fun callOpenAiChatFallback(
+        anthropicError: Exception,
+        sourceModel: String = ChatPrompt.MODEL
+    ): JSONObject = withContext(Dispatchers.IO) {
+        val openAiApiKey = BuildConfig.OPENAI_API_KEY.trim()
+        if (openAiApiKey.isBlank()) throw anthropicError
+
+        val fallbackModel = AgentModelConfig.openAiFallbackModelFor(sourceModel)
+        activeSearchContext = SearchExecutionContext(
+            provider = SearchProvider.OPENAI,
+            model = fallbackModel
+        )
+        val requestPayload = JSONObject()
+            .put("model", fallbackModel)
+            .put("max_completion_tokens", CHAT_MAX_TOKENS)
+            .put("messages", buildOpenAiChatMessages())
+            .put("tools", buildOpenAiChatTools())
+            .put("tool_choice", "auto")
+
+        val body = requestPayload
+            .toString()
+            .toRequestBody("application/json".toMediaType())
+
+        val request = Request.Builder()
+            .url(OPENAI_CHAT_COMPLETIONS_ENDPOINT)
+            .addHeader("Authorization", "Bearer $openAiApiKey")
+            .post(body)
+            .build()
+
+        val startedAtMs = System.currentTimeMillis()
         chatClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 val responseBody = response.body?.string().orEmpty()
@@ -988,7 +1311,15 @@ class AgentManager(
                 throw fallbackError
             }
             val responseJson = JSONObject(response.body?.string().orEmpty())
-            AgentApiSupport.parseOpenAiChatCompletionResult(responseJson)
+            val usageRecord = recordModelUsage(
+                "openai",
+                fallbackModel,
+                responseJson,
+                callType = "fallback",
+                durationMs = System.currentTimeMillis() - startedAtMs
+            )
+            emitProviderTag("ChatGPT")
+            attachModelCallId(AgentApiSupport.parseOpenAiChatCompletionResult(responseJson), usageRecord)
         }
     }
 
@@ -1006,10 +1337,11 @@ class AgentManager(
     }
 
     private fun buildOpenAiChatMessages(): JSONArray {
-        // OpenAI fallback: uses only the persistent conversation. Mid-turn tool round-trip
-        // blocks (Anthropic-shaped) are not translated; fallback firing mid-loop is rare and
-        // the next turn resumes with full continuity.
-        return conversation.toOpenAiChatMessages(ChatPrompt.instructions())
+        val history = conversation.toAnthropicChatMessages().toJsonObjectList() + pendingTurnBlocks
+        return AgentApiSupport.buildOpenAiChatMessages(
+            systemPrompt = ChatPrompt.instructions(memoryPromptSnapshot()),
+            chatHistory = history
+        )
     }
 
     private fun buildOpenAiChatTools(): JSONArray {
@@ -1031,6 +1363,19 @@ class AgentManager(
                 )
             }
         }
+    }
+
+    private fun JSONArray.toJsonObjectList(): List<JSONObject> {
+        return buildList {
+            for (i in 0 until length()) {
+                optJSONObject(i)?.let(::add)
+            }
+        }
+    }
+
+    private fun memoryPromptSnapshot(): MemoryPromptSnapshot {
+        return runCatching { memoryRepository.promptSnapshot() }
+            .getOrDefault(MemoryPromptSnapshot.EMPTY)
     }
 
     private fun performWebSearch(query: String): SearchWebResult {
@@ -1079,12 +1424,20 @@ class AgentManager(
                 .post(body)
                 .build()
 
+            val startedAtMs = System.currentTimeMillis()
             chatClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     val responseBody = response.body?.string().orEmpty()
                     SearchWebResult(ok = false, error = "HTTP ${response.code}: $responseBody")
                 } else {
                     val responseJson = JSONObject(response.body?.string().orEmpty())
+                    recordModelUsageAsync(
+                        "anthropic",
+                        model,
+                        responseJson,
+                        callType = "search",
+                        durationMs = System.currentTimeMillis() - startedAtMs
+                    )
                     val content = responseJson.optJSONArray("content") ?: JSONArray()
                     val textParts = StringBuilder()
                     for (i in 0 until content.length()) {
@@ -1132,12 +1485,21 @@ class AgentManager(
                 .post(body)
                 .build()
 
+            val startedAtMs = System.currentTimeMillis()
             chatClient.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) {
                     val responseBody = response.body?.string().orEmpty()
                     SearchWebResult(ok = false, error = "HTTP ${response.code}: $responseBody")
                 } else {
                     val responseJson = JSONObject(response.body?.string().orEmpty())
+                    recordModelUsageAsync(
+                        "openai",
+                        searchModel,
+                        responseJson,
+                        callType = "search",
+                        durationMs = System.currentTimeMillis() - startedAtMs,
+                        webSearchRequestsOverride = 1
+                    )
                     val answer = AgentApiSupport.parseOpenAiChatCompletionText(responseJson)
                         .optString("content")
                         .trim()
@@ -1168,7 +1530,9 @@ class AgentManager(
 
         for (step in 0 until AgentTooling.MAX_AGENT_STEPS) {
             EvalRecorder.active?.beginStep(step)
-            val assistantMessage = callAnthropicAgent(apiKey)
+            val assistantMessage = callAgent()
+            val modelCallId = assistantMessage.optString("_marvin_model_call_id").takeIf { it.isNotBlank() }
+            val toolTelemetry = mutableListOf<ToolCallTelemetry>()
 
             val rawContent = assistantMessage.optString("content", "")
                 .takeIf { it != "null" }?.trim() ?: ""
@@ -1225,10 +1589,20 @@ class AgentManager(
                         .put("arguments", rawArgs)
                     )
 
-                callbacks.onToolCalled(canonName)
+                callbacks.onToolCalled(canonName, rawArgs)
                 val result = toolExecutor.executeToolCall(toolCall)
                 val resultContent = JSONObject(result.toolMessage.optString("content", "{}"))
                 recordToolOutcome(toolName = canonName, rawArgs = rawArgs, content = resultContent)
+                toolTelemetry.add(
+                    ToolCallTelemetry(
+                        name = canonName,
+                        rawArgs = rawArgs,
+                        success = resultContent.optBoolean("ok", false),
+                        resultSummary = AgentSessionFormatting
+                            .buildToolOutcomeDetails(canonName, rawArgs, resultContent)
+                            .take(400)
+                    )
+                )
                 EvalRecorder.active?.let { rec ->
                     val last = toolCallLog.lastOrNull()
                     if (last != null) {
@@ -1278,7 +1652,10 @@ class AgentManager(
 
                 // Hard loop breaker: if the same tool+args repeated too many times, force stop
                 if (isHardLoopDetected()) {
-                    callbacks.onAgentResponse("I got stuck in a loop and stopped. Try rephrasing your request or doing part of the task manually first.")
+                    callbacks.onAgentCutoff(
+                        "hard_loop",
+                        "I got stuck in a loop and stopped. Try rephrasing your request or doing part of the task manually first."
+                    )
                     hasUserFacingOutput = true
                     evalStopReason = "hard_loop"
                     shouldStopLoop = true
@@ -1293,6 +1670,8 @@ class AgentManager(
                     break
                 }
             }
+
+            updateModelCallToolTelemetry(modelCallId, toolTelemetry)
 
             if (shouldStopLoop) break
 
@@ -1320,8 +1699,15 @@ class AgentManager(
             finalScreenshotDataUrl = latestScreenshotDataUrl
         )
 
+        if (evalStopReason == "task_complete" && agentState.mapsWasActive) {
+            returnToMaps()
+        }
+
         if (!hasUserFacingOutput) {
-            callbacks.onAgentResponse("I stopped early before finishing. Say \"try again\" to continue.")
+            callbacks.onAgentCutoff(
+                evalStopReason,
+                "I stopped early before finishing. Say \"try again\" to continue."
+            )
         }
     }
 
@@ -1343,15 +1729,109 @@ class AgentManager(
         }
     }
 
-    private suspend fun callAnthropicAgent(apiKey: String): JSONObject = withContext(Dispatchers.IO) {
+    private suspend fun callAgent(): JSONObject {
+        val requestedModel = AgentModelConfig.AGENT_MODEL
+        if (requestedModel.contains("claude", ignoreCase = true)) {
+            return try {
+                callAnthropicAgent(requestedModel)
+            } catch (anthropicError: Exception) {
+                callOpenAiAgentFallback(anthropicError, requestedModel)
+            }
+        }
+
+        return try {
+            callQwenAgent()
+        } catch (qwenError: Exception) {
+            try {
+                callAnthropicAgent(AgentModelConfig.ANTHROPIC_AGENT_BACKUP_MODEL)
+            } catch (anthropicError: Exception) {
+                anthropicError.addSuppressed(qwenError)
+                callOpenAiAgentFallback(anthropicError, AgentModelConfig.ANTHROPIC_AGENT_BACKUP_MODEL)
+            }
+        }
+    }
+
+    private suspend fun callQwenAgent(): JSONObject = withContext(Dispatchers.IO) {
+        val openRouterApiKey = BuildConfig.OPENROUTER_API_KEY.trim()
+        if (openRouterApiKey.isBlank()) throw IllegalStateException("OpenRouter API key not configured")
+
         activeSearchContext = SearchExecutionContext(
-            provider = SearchProvider.ANTHROPIC,
-            model = AgentModelConfig.AGENT_MODEL
+            provider = SearchProvider.OPENAI,
+            model = AgentModelConfig.OPENAI_WEB_SEARCH_MODEL
         )
         val requestPayload = JSONObject()
-            .put("model", AgentModelConfig.AGENT_MODEL)
+            .put("model", AgentModelConfig.QWEN_MODEL)
             .put("max_tokens", ANTHROPIC_AGENT_MAX_TOKENS)
-            .put("system", AgentTooling.systemPrompt(agentState.currentGoal.ifBlank { latestUserMessage }))
+            .put("messages", buildOpenAiAgentMessages())
+            .put("response_format", JSONObject().put("type", "json_object"))
+
+        val body = requestPayload
+            .toString()
+            .toRequestBody("application/json".toMediaType())
+
+        val request = Request.Builder()
+            .url(OPENROUTER_CHAT_COMPLETIONS_ENDPOINT)
+            .addHeader("Authorization", "Bearer $openRouterApiKey")
+            .post(body)
+            .build()
+
+        val maxRetries = 2
+        var lastException: Exception? = null
+        for (attempt in 0..maxRetries) {
+            try {
+                val startedAtMs = System.currentTimeMillis()
+                return@withContext chatClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) {
+                        val responseBody = response.body?.string().orEmpty()
+                        throw IllegalStateException(
+                            AgentApiSupport.formatAgentApiError(
+                                providerLabel = "openrouter",
+                                model = AgentModelConfig.QWEN_MODEL,
+                                statusCode = response.code,
+                                responseBody = responseBody,
+                                maxBodyChars = MAX_AGENT_ERROR_BODY_CHARS
+                            )
+                        )
+                    }
+                    val responseJson = JSONObject(response.body?.string().orEmpty())
+                    val usageRecord = recordModelUsage(
+                        "openrouter",
+                        AgentModelConfig.QWEN_MODEL,
+                        responseJson,
+                        durationMs = System.currentTimeMillis() - startedAtMs
+                    )
+                    emitProviderTag("Qwen")
+                    attachModelCallId(AgentApiSupport.parseOpenAiChatCompletionText(responseJson), usageRecord)
+                }
+            } catch (e: Exception) {
+                lastException = e
+                if (attempt < maxRetries) {
+                    val backoffMs = 1000L * (1 shl attempt)
+                    delay(backoffMs)
+                }
+            }
+        }
+        throw lastException ?: IllegalStateException("OpenRouter agent call failed")
+    }
+
+    private suspend fun callAnthropicAgent(model: String): JSONObject = withContext(Dispatchers.IO) {
+        val apiKey = BuildConfig.ANTHROPIC_API_KEY.trim()
+        if (apiKey.isBlank()) throw IllegalStateException("Anthropic API key not configured")
+
+        activeSearchContext = SearchExecutionContext(
+            provider = SearchProvider.ANTHROPIC,
+            model = model
+        )
+        val requestPayload = JSONObject()
+            .put("model", model)
+            .put("max_tokens", ANTHROPIC_AGENT_MAX_TOKENS)
+            .put(
+                "system",
+                AgentTooling.systemPrompt(
+                    goal = agentState.currentGoal.ifBlank { latestUserMessage },
+                    memorySnapshot = memoryPromptSnapshot()
+                )
+            )
             .put("messages", buildAnthropicAgentMessages())
 
         val body = requestPayload
@@ -1369,13 +1849,14 @@ class AgentManager(
         var lastException: Exception? = null
         for (attempt in 0..maxRetries) {
             try {
+                val startedAtMs = System.currentTimeMillis()
                 return@withContext chatClient.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         val responseBody = response.body?.string().orEmpty()
                         throw IllegalStateException(
                             AgentApiSupport.formatAgentApiError(
                                 providerLabel = "anthropic",
-                                model = AgentModelConfig.AGENT_MODEL,
+                                model = model,
                                 statusCode = response.code,
                                 responseBody = responseBody,
                                 maxBodyChars = MAX_AGENT_ERROR_BODY_CHARS
@@ -1383,7 +1864,14 @@ class AgentManager(
                         )
                     }
                     val responseJson = JSONObject(response.body?.string().orEmpty())
-                    AgentApiSupport.parseAnthropicMessagesApiResult(responseJson)
+                    val usageRecord = recordModelUsage(
+                        "anthropic",
+                        model,
+                        responseJson,
+                        durationMs = System.currentTimeMillis() - startedAtMs
+                    )
+                    emitProviderTag("Anthropic")
+                    attachModelCallId(AgentApiSupport.parseAnthropicMessagesApiResult(responseJson), usageRecord)
                 }
             } catch (e: Exception) {
                 lastException = e
@@ -1393,14 +1881,17 @@ class AgentManager(
                 }
             }
         }
-        return@withContext callOpenAiAgentFallback(lastException!!)
+        throw lastException ?: IllegalStateException("Anthropic agent call failed")
     }
 
-    private suspend fun callOpenAiAgentFallback(anthropicError: Exception): JSONObject = withContext(Dispatchers.IO) {
+    private suspend fun callOpenAiAgentFallback(
+        anthropicError: Exception,
+        sourceModel: String = AgentModelConfig.AGENT_MODEL
+    ): JSONObject = withContext(Dispatchers.IO) {
         val openAiApiKey = BuildConfig.OPENAI_API_KEY.trim()
         if (openAiApiKey.isBlank()) throw anthropicError
 
-        val fallbackModel = AgentModelConfig.openAiFallbackModelFor(AgentModelConfig.AGENT_MODEL)
+        val fallbackModel = AgentModelConfig.openAiFallbackModelFor(sourceModel)
         activeSearchContext = SearchExecutionContext(
             provider = SearchProvider.OPENAI,
             model = fallbackModel
@@ -1422,6 +1913,7 @@ class AgentManager(
             .post(body)
             .build()
 
+        val startedAtMs = System.currentTimeMillis()
         chatClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 val responseBody = response.body?.string().orEmpty()
@@ -1438,7 +1930,164 @@ class AgentManager(
                 throw fallbackError
             }
             val responseJson = JSONObject(response.body?.string().orEmpty())
-            AgentApiSupport.parseOpenAiChatCompletionText(responseJson)
+            val usageRecord = recordModelUsage(
+                "openai",
+                fallbackModel,
+                responseJson,
+                callType = "fallback",
+                durationMs = System.currentTimeMillis() - startedAtMs
+            )
+            emitProviderTag("ChatGPT")
+            attachModelCallId(AgentApiSupport.parseOpenAiChatCompletionText(responseJson), usageRecord)
+        }
+    }
+
+    private suspend fun recordModelUsage(
+        provider: String,
+        model: String,
+        responseJson: JSONObject,
+        callType: String = "chat",
+        durationMs: Long? = null,
+        webSearchRequestsOverride: Int? = null
+    ): ModelUsageRecordResult? {
+        val usage = responseJson.optJSONObject("usage") ?: return null
+        val inputTokens = usage.optInt("input_tokens", usage.optInt("prompt_tokens", 0))
+        val outputTokens = usage.optInt("output_tokens", usage.optInt("completion_tokens", 0))
+        val cachedInputTokens = cachedInputTokensFromUsage(usage)
+        val cacheCreationInputTokens = usage.optInt("cache_creation_input_tokens", 0)
+        val webSearchRequests = webSearchRequestsOverride
+            ?: usage.optJSONObject("server_tool_use")?.optInt("web_search_requests", 0)
+            ?: 0
+        if (
+            inputTokens <= 0 &&
+            outputTokens <= 0 &&
+            cachedInputTokens <= 0 &&
+            cacheCreationInputTokens <= 0 &&
+            webSearchRequests <= 0
+        ) return null
+
+        val taskId = usageTaskIdProvider()
+        return runCatching {
+            backendClient.recordModelUsage(
+                taskId = taskId,
+                provider = provider,
+                model = model,
+                inputTokens = inputTokens,
+                outputTokens = outputTokens,
+                callType = callType,
+                cachedInputTokens = cachedInputTokens,
+                cacheCreationInputTokens = cacheCreationInputTokens,
+                webSearchRequests = webSearchRequests,
+                durationMs = durationMs
+            )
+        }.onFailure {
+            Log.w("AgentManager", "Could not record model usage", it)
+        }.getOrNull()
+    }
+
+    private fun recordModelUsageAsync(
+        provider: String,
+        model: String,
+        responseJson: JSONObject,
+        callType: String = "chat",
+        durationMs: Long? = null,
+        webSearchRequestsOverride: Int? = null
+    ) {
+        scope.launch(Dispatchers.IO) {
+            recordModelUsage(
+                provider,
+                model,
+                responseJson,
+                callType,
+                durationMs,
+                webSearchRequestsOverride
+            )
+        }
+    }
+
+    private fun cachedInputTokensFromUsage(usage: JSONObject): Int {
+        val anthropicCacheRead = usage.optInt("cache_read_input_tokens", 0)
+        if (anthropicCacheRead > 0) return anthropicCacheRead
+
+        val promptDetails = usage.optJSONObject("prompt_tokens_details")
+        val openAiChatCached = promptDetails?.optInt("cached_tokens", 0) ?: 0
+        if (openAiChatCached > 0) return openAiChatCached
+
+        val inputDetails = usage.optJSONObject("input_tokens_details")
+        return inputDetails?.optInt("cached_tokens", 0) ?: 0
+    }
+
+    private fun recordMemoryReviewUsage(responseJson: JSONObject) {
+        recordModelUsageAsync(
+            provider = "openai",
+            model = AgentModelConfig.MEMORY_SAVE_MODEL,
+            responseJson = responseJson,
+            callType = "memory_review"
+        )
+    }
+
+    private fun attachModelCallId(result: JSONObject, usageRecord: ModelUsageRecordResult?): JSONObject {
+        val modelCallId = usageRecord?.modelCallId ?: return result
+        return result.put("_marvin_model_call_id", modelCallId)
+    }
+
+    private suspend fun updateModelCallTools(
+        modelCallId: String?,
+        executedTools: List<ExecutedChatTool>
+    ) {
+        val taskId = usageTaskIdProvider() ?: return
+        if (modelCallId.isNullOrBlank() || executedTools.isEmpty()) return
+        val tools = JSONArray().also { arr ->
+            executedTools.forEach { tool ->
+                arr.put(
+                    JSONObject()
+                        .put("name", tool.name)
+                        .put("args", runCatching { JSONObject(tool.rawArgs) }.getOrDefault(JSONObject()))
+                        .put("success", tool.success)
+                        .put("resultSummary", tool.resultDisplay.take(400))
+                )
+            }
+        }
+        withContext(Dispatchers.IO) {
+            runCatching {
+                backendClient.updateModelCallTools(
+                    taskId = taskId,
+                    modelCallId = modelCallId,
+                    toolsCalled = tools
+                )
+            }.onFailure {
+                Log.w("AgentManager", "Could not update model call tools", it)
+            }
+        }
+    }
+
+    private suspend fun updateModelCallToolTelemetry(
+        modelCallId: String?,
+        toolTelemetry: List<ToolCallTelemetry>
+    ) {
+        val taskId = usageTaskIdProvider() ?: return
+        if (modelCallId.isNullOrBlank() || toolTelemetry.isEmpty()) return
+        val tools = JSONArray().also { arr ->
+            toolTelemetry.forEach { tool ->
+                arr.put(
+                    JSONObject()
+                        .put("name", tool.name)
+                        .put("args", runCatching { JSONObject(tool.rawArgs) }.getOrDefault(JSONObject()))
+                        .put("success", tool.success)
+                        .put("resultSummary", tool.resultSummary.take(400))
+                )
+            }
+        }
+        withContext(Dispatchers.IO) {
+            runCatching {
+                backendClient.updateModelCallTools(
+                    taskId = taskId,
+                    modelCallId = modelCallId,
+                    toolsCalled = tools
+                )
+            }.onFailure {
+                Log.w("AgentManager", "Could not update model call tools", it)
+            }
         }
     }
 
@@ -1504,7 +2153,8 @@ class AgentManager(
             lastTree = emptyMap(),
             lastObservation = null,
             needsUserInput = false,
-            pendingQuestion = null
+            pendingQuestion = null,
+            mapsWasActive = false
         )
     }
 
@@ -1596,7 +2246,13 @@ class AgentManager(
             .put(
                 JSONObject()
                     .put("role", "system")
-                    .put("content", AgentTooling.systemPrompt(agentState.currentGoal.ifBlank { latestUserMessage }))
+                    .put(
+                        "content",
+                        AgentTooling.systemPrompt(
+                            goal = agentState.currentGoal.ifBlank { latestUserMessage },
+                            memorySnapshot = memoryPromptSnapshot()
+                        )
+                    )
             )
             .put(
                 JSONObject()
@@ -1867,6 +2523,7 @@ class AgentManager(
     companion object {
         private const val ANTHROPIC_MESSAGES_ENDPOINT = "https://api.anthropic.com/v1/messages"
         private const val OPENAI_CHAT_COMPLETIONS_ENDPOINT = "https://api.openai.com/v1/chat/completions"
+        private const val OPENROUTER_CHAT_COMPLETIONS_ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
         private const val ANTHROPIC_VERSION = "2023-06-01"
         private const val ANTHROPIC_AGENT_MAX_TOKENS = 4096
         private const val CHAT_MAX_TOKENS = 1024
@@ -1878,6 +2535,7 @@ class AgentManager(
         private const val MAX_MEMORY_ENTRIES = 12
         private const val RECENT_MEMORY_LIMIT = 6
         private const val EMPTY_ACTION_RETRY_CAP = 2
+        private const val CHAT_EMPTY_RESPONSE_RETRY_CAP = 3
         private val DIRECT_CHAT_SHARED_TOOLS = SharedToolSchemas.chatFunctionTools()
             .map { it.name }
             .toSet()

@@ -1,6 +1,7 @@
 package com.example.mobile_assistant
 
 import android.Manifest
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.widget.Toast
@@ -63,6 +64,15 @@ class AssistantActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
+        if (!FirebaseAuthSupport.ensureInitialized(this) ||
+            FirebaseAuthSupport.auth(this).currentUser == null
+        ) {
+            startActivity(loginIntent())
+            Toast.makeText(this, getString(R.string.account_sign_in_required), Toast.LENGTH_LONG).show()
+            finish()
+            return
+        }
+
         val missingPermissions = mutableListOf<String>()
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
@@ -105,7 +115,7 @@ class AssistantActivity : AppCompatActivity() {
     private fun showOverlayAndFinish() {
         val service = AssistantAccessibilityService.instance
         if (service != null) {
-            service.showOverlay()
+            service.handleAssistGesture()
         } else {
             Toast.makeText(
                 this,
@@ -114,5 +124,11 @@ class AssistantActivity : AppCompatActivity() {
             ).show()
         }
         finish()
+    }
+
+    private fun loginIntent(): Intent {
+        return Intent(this, OnboardingActivity::class.java)
+            .putExtra(OnboardingActivity.EXTRA_INITIAL_STEP, OnboardingActivity.STEP_AUTH_WELCOME)
+            .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     }
 }

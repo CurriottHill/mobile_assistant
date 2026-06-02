@@ -12,7 +12,8 @@ data class AgentState(
     val lastTree: Map<String, NodeFingerprint>,
     val lastObservation: ScreenObservationState?,
     val needsUserInput: Boolean,
-    val pendingQuestion: String?
+    val pendingQuestion: String?,
+    val mapsWasActive: Boolean = false
 )
 
 data class ScreenObservationState(

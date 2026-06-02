@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Nimbus — warm-brown brand surface, matched to the home page (identical in light & night) -->
+    <!-- marvin — warm-brown brand surface, matched to the home page (identical in light & night) -->
     <color name="assistant_primary">#A98467</color>
     <color name="assistant_secondary">#C97E5A</color>
     <color name="assistant_accent">#A98467</color>
@@ -19,8 +19,10 @@
     <!-- Surfaces -->
     <color name="assistant_surface">#F0E7D8</color>
     <color name="assistant_surface_dim">#F0E7D8</color>
-    <color name="assistant_keyboard_bg">#F0E7D8</color>
+    <color name="assistant_keyboard_bg">#F4EEE5</color>
     <color name="assistant_separator">#EBE1D2</color>
+    <color name="assistant_handle">#CDD0D4</color>
+    <color name="assistant_logo_underline">#D7B488</color>
 
     <!-- Cancel / pill button -->
     <color name="assistant_cancel_bg">#F0E7D8</color>
@@ -101,4 +103,26 @@
     <color name="home_footer_link">#8A6A45</color>
     <color name="home_progress_track">#EAE0CF</color>
     <color name="home_progress_fill">#A98467</color>
+
+    <!-- Onboarding status dots -->
+    <color name="status_dot_red">#C9594A</color>
+    <color name="status_dot_amber">#C99A4A</color>
+    <color name="status_dot_green">#5E6B43</color>
+
+    <!-- Tool-call chip icon accents -->
+    <color name="tool_icon_app">#4C6EF5</color>
+    <color name="tool_icon_maps">#2F9E44</color>
+    <color name="tool_icon_message">#1098AD</color>
+    <color name="tool_icon_call">#37B24D</color>
+    <color name="tool_icon_contact">#7048E8</color>
+    <color name="tool_icon_music">#1DB954</color>
+    <color name="tool_icon_clock">#F76707</color>
+    <color name="tool_icon_email">#F03E3E</color>
+    <color name="tool_icon_calendar">#4263EB</color>
+    <color name="tool_icon_web">#1C7ED6</color>
+    <color name="tool_icon_weather">#F59F00</color>
+    <color name="tool_icon_memory">#AE3EC9</color>
+    <color name="tool_icon_device">#5C7080</color>
+    <color name="tool_icon_clipboard">#7950F2</color>
+    <color name="tool_icon_bell">#D6336C</color>
 </resources>

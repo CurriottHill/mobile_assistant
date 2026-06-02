@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 490 125" width="490" height="125" overflow="visible">
+  <text x="0" y="121" text-anchor="start" textLength="490" lengthAdjust="spacingAndGlyphs" fill="#C6A47E"
+      font-family="Geist, Inter, SF Pro Display, Helvetica Neue, Arial, sans-serif"
+      font-weight="600" font-size="168" letter-spacing="-0.05em">
+    <tspan>m</tspan><tspan dx="-3">a</tspan><tspan dx="-4">r</tspan><tspan dx="-5">v</tspan><tspan dx="-3">&#x0131;</tspan><tspan dx="-2">n</tspan>
+  </text>
+  <circle cx="381" cy="11" r="11" fill="#C6A47E"/>
+</svg>

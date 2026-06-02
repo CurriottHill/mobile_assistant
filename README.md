@@ -1,83 +1,136 @@
-# Mobile Assistant
+# Marvin Mobile Assistant
 
-An Android AI assistant that runs as a floating overlay and can control your phone. Speak or type a request — it answers conversationally or executes tasks on-screen using Android's accessibility APIs.
+Marvin is an Android AI assistant prototype that can answer questions, listen to voice input, speak responses, and operate apps through Android accessibility APIs. I built it as a portfolio project to explore what a phone-native assistant can do when an LLM has structured tools, screen context, and guarded automation primitives.
 
-## Features
+The app is intentionally powerful: it can inspect the foreground UI, draw an overlay above other apps, and dispatch taps, swipes, text entry, and navigation. Run it on a test device first and review the permissions before using it with personal accounts.
 
-**Conversational AI**
-- Voice input via OpenAI Whisper transcription
-- Text-to-speech responses via Cartesia
-- Persistent conversation history across turns
+## What It Demonstrates
 
-**Phone Automation**
-- Read what's on screen and interact with any app
-- Tap, scroll, swipe, type, navigate
-- Open apps and URLs
+- Floating assistant overlay launched from the app or Android assistant shortcut.
+- Accessibility-backed screen reading, UI targeting, scrolling, tapping, typing, and app navigation.
+- Multi-step agent loop with tool schemas, execution history, cutoff handling, and provider fallback paths.
+- Voice input through AssemblyAI transcription and streaming text-to-speech through Deepgram.
+- Integrations for Spotify, Google account services, calls, SMS, WhatsApp, calendar, maps, weather, notifications, memory, and device utilities.
+- Local evaluation harness with task catalogs, run recording, scoring helpers, and regression tests for tool behavior.
+- Optional Firebase auth plus optional hosted account/credit backend, both disabled unless configured locally.
 
-**Integrations**
-- Spotify — play songs, albums, playlists by name or search query
-- Phone calls and SMS — resolves contact names automatically
-- WhatsApp messaging
-- Timers, alarms, and stopwatch
+## Architecture
 
-## How It Works
+The app has two user-facing layers:
 
-The assistant runs as an Android Accessibility Service, which lets it draw an overlay on top of other apps without stealing focus. This means it can read the active app's UI tree and interact with it while you're using any other app.
+- `AssistantOverlayController` owns the overlay UI, microphone capture, transcription, TTS playback, and lifecycle coordination.
+- `AgentManager` owns the LLM loop, prompt state, model/provider fallbacks, tool-call parsing, execution telemetry, and final response handling.
 
-There are two AI layers:
-1. **Chat** — handles questions and general requests (ChatGPT via OpenAI)
-2. **Agent** — activated when a phone action is needed; plans and executes multi-step tasks using screen observation + tool calls
+Device actions are split into focused services such as `SpotifyService`, `MapsToolService`, `CallToolService`, `SmsToolService`, `CalendarToolService`, `MemoryToolService`, and `GoogleAccountService`. Shared low-level automation lives in classes such as `ScreenReader`, `ScreenGestureDispatcher`, `ScreenPageScrollDispatcher`, and `AssistantAccessibilityService`.
+
+More detail is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Tech Stack
+
+- Kotlin and Android Views
+- Android Accessibility Service and Notification Listener Service
+- Gradle Kotlin DSL
+- OkHttp and coroutines
+- Firebase Auth, optional
+- AssemblyAI, Deepgram, OpenRouter, Anthropic, OpenAI, Google, Spotify APIs, all configured locally
 
 ## Setup
 
 ### Prerequisites
-- Android 7.0+ (API 24)
-- [OpenAI API key](https://platform.openai.com/) (ChatGPT and Whisper transcription)
-- [Cartesia API key](https://cartesia.ai/) (TTS)
-- [Spotify app](https://developer.spotify.com/dashboard) credentials (optional)
 
-### Build Configuration
+- Android Studio with the Android SDK installed
+- Android 7.0+ device or emulator, API 24+
+- A local `local.properties` file based on `local.properties.example`
+- At least one LLM provider key, depending on the provider path you want to exercise
 
-Copy `local.properties.example` to `local.properties` and fill in your keys:
+### Local Configuration
+
+Copy the example config:
+
+```bash
+cp local.properties.example local.properties
+```
+
+Then fill in only the services you want to use:
 
 ```properties
 sdk.dir=/path/to/your/android/sdk
 
-OPENAI_API_KEY=sk-proj-...
-CARTESIA_API_KEY=sk_car_...
+OPENROUTER_API_KEY=your_openrouter_api_key
+ANTHROPIC_API_KEY=your_anthropic_api_key
+OPENAI_API_KEY=your_openai_api_key
+ASSEMBLY_AI_API_KEY=your_assemblyai_api_key
+DEEPGRAM_API_KEY=your_deepgram_api_key
 SPOTIFY_CLIENT_ID=your_spotify_client_id
 SPOTIFY_REDIRECT_URI=mobile_assistant://spotify-auth-callback
+MAPS_API_KEY=your_maps_api_key
 ```
 
-Anthropic support remains in the codebase, but the default app path uses OpenAI and reads `OPENAI_API_KEY` from `local.properties`.
+`local.properties` is gitignored. Do not commit API keys, Firebase exports, keystores, screenshots from personal devices, or generated evaluation archives.
 
-### Runtime Setup
+### Optional Firebase Auth
 
-1. Install and launch the app
-2. Accept Terms & Privacy
-3. Tap **Open Accessibility Settings** and enable **Mobile Assistant**
-4. Return to the app after adding `OPENAI_API_KEY` to `local.properties`
-5. Optionally connect Spotify
+Firebase is only needed for account sign-in flows. For local builds you can either:
 
-Hold the power button (or set the app as your default assistant) to open the overlay.
+- Put Firebase values in `local.properties`, or
+- Copy `app/google-services.example.json` to `app/google-services.json` and replace the placeholders.
 
-## Permissions
+`app/google-services.json` is gitignored because it is environment-specific.
 
-| Permission | Purpose |
-|---|---|
+### Optional Hosted Backend
+
+The hosted account/credit backend is disabled by default. Set these only if you have your own compatible backend:
+
+```properties
+MARVIN_API_BASE_URL=https://your-backend.example.com
+MARVIN_BILLING_URL=https://your-billing-page.example.com
+```
+
+Blank values are valid for portfolio/demo builds. The app will show a clear "not configured" message instead of calling a private deployment.
+
+## Build And Test
+
+```bash
+./gradlew :app:testDebugUnitTest
+./gradlew :app:assembleDebug
+```
+
+Install the debug APK from `app/build/outputs/apk/debug/`, or use Android Studio.
+
+## Runtime Permissions
+
+Marvin asks for permissions according to the feature being used:
+
+| Permission or service | Purpose |
+| --- | --- |
+| Accessibility Service | Read on-screen UI, draw overlay, tap, scroll, type, and navigate |
+| Notification Listener | Read notification summaries when requested |
 | `RECORD_AUDIO` | Voice input |
 | `INTERNET` | API calls |
-| `READ_CONTACTS` | Resolve names for calls/SMS |
-| `READ_CALL_LOG` | Call back last caller |
+| `READ_CONTACTS` | Resolve contact names for calls and messages |
 | `CALL_PHONE` | Initiate calls |
-| `SEND_SMS` | Send text messages |
-| `SET_ALARM` | Timers and alarms |
-| Accessibility Service | Overlay and screen control |
+| `SEND_SMS` | Send SMS messages |
+| `READ_CALENDAR` / `WRITE_CALENDAR` | Read and create calendar events |
+| Location permissions | Estimate routes and travel time |
+| `SET_ALARM` | Create timers and alarms |
 
-## Safety
+## Safety Boundaries
 
-The agent will not open banking or payment apps (PayPal, Venmo, Zelle, etc.) or perform any action involving real money, purchases, or card details. This is enforced in the system prompt and cannot be overridden by user instructions.
+The agent is designed to refuse banking, payment, purchase, card-detail, and money-transfer workflows. Those restrictions are present in the prompt/tooling layer and should be treated as a safety aid, not a formal security boundary. Keep testing on non-critical accounts and review any new tool before enabling it by default.
+
+## Repository Hygiene
+
+This repo is prepared for public development:
+
+- Local secrets and generated outputs are ignored.
+- Firebase config has a template instead of a real environment file.
+- Hosted backend URLs are opt-in.
+- Setup, architecture, security, and contribution notes are documented.
+
+Before publishing an existing branch, also check the git history for previously committed secrets or personal screenshots. `.gitignore` protects future commits, but it does not rewrite history.
+
+See [docs/PUBLISHING_CHECKLIST.md](docs/PUBLISHING_CHECKLIST.md) for the final public-release checklist.
 
 ## License
 
-See [LICENSE](LICENSE).
+Apache License 2.0. See [LICENSE](LICENSE).

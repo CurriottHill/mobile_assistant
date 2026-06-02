@@ -183,6 +183,33 @@ class AgentApiSupportTest {
             "gpt-5.4",
             AgentModelConfig.openAiFallbackModelFor("claude-sonnet-4-6")
         )
+        assertEquals(
+            "gpt-5-mini",
+            AgentModelConfig.openAiFallbackModelFor("deepseek/deepseek-v4-flash:free")
+        )
+    }
+
+    @Test
+    fun allowAnthropicChatFallbackFor_blocksExplicitDeepSeekChatModel() {
+        assertEquals(
+            false,
+            AgentModelConfig.allowAnthropicChatFallbackFor("deepseek/deepseek-v4-flash:free")
+        )
+        assertEquals(
+            true,
+            AgentModelConfig.allowAnthropicChatFallbackFor("qwen/qwen3.7-max")
+        )
+    }
+
+    @Test
+    fun deepSeekChatFallbackFor_mapsFreeChatModelOnly() {
+        assertEquals(
+            "deepseek/deepseek-v4-flash",
+            AgentModelConfig.deepSeekChatFallbackFor("deepseek/deepseek-v4-flash:free")
+        )
+        assertNull(
+            AgentModelConfig.deepSeekChatFallbackFor("qwen/qwen3.7-max")
+        )
     }
 
     @Test

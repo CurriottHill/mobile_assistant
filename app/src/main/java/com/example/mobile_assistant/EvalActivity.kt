@@ -21,7 +21,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * Debug-only eval harness. Pick a model, tap a task to inject it into the live agent
- * exactly as a typed message, let [EvalRecorder] capture the run, have Haiku judge it,
+ * exactly as a typed message, let [EvalRecorder] capture the run, have Anthropic judge it,
  * then confirm/override the verdict. Results persist forever (see plan §9).
  *
  * Device state is NOT auto-reset between tasks — arrange it per each task's setup hint.
@@ -35,7 +35,7 @@ class EvalActivity : AppCompatActivity() {
     private lateinit var verdictPanel: LinearLayout
 
     private var running = false
-    private var selectedModel = AgentModelConfig.EVAL_HAIKU_MODEL
+    private var selectedModel = AgentModelConfig.QWEN_MODEL
     private lateinit var modelStatus: TextView
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -87,18 +87,18 @@ class EvalActivity : AppCompatActivity() {
     private fun buildModelSelector() {
         addHeader("Agent model")
         val rowfun = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val haiku = Button(this).apply { text = "Haiku" }
-        val sonnet = Button(this).apply { text = "Sonnet" }
-        haiku.setOnClickListener {
-            selectedModel = AgentModelConfig.EVAL_HAIKU_MODEL
+        val qwen = Button(this).apply { text = "Qwen" }
+        val anthropic = Button(this).apply { text = "Anthropic" }
+        qwen.setOnClickListener {
+            selectedModel = AgentModelConfig.QWEN_MODEL
             refreshModelStatus()
         }
-        sonnet.setOnClickListener {
-            selectedModel = AgentModelConfig.SONNET_MODEL
+        anthropic.setOnClickListener {
+            selectedModel = AgentModelConfig.ANTHROPIC_AGENT_BACKUP_MODEL
             refreshModelStatus()
         }
-        rowfun.addView(haiku)
-        rowfun.addView(sonnet)
+        rowfun.addView(qwen)
+        rowfun.addView(anthropic)
         root.addView(rowfun)
         modelStatus = addBody("")
         refreshModelStatus()

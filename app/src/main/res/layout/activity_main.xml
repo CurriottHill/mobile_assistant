@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/main"
     android:layout_width="match_parent"
@@ -36,21 +37,24 @@
                     android:layout_width="44dp"
                     android:layout_height="44dp"
                     android:background="@drawable/bg_logo_mark"
-                    android:contentDescription="@string/aura_logo_description"
+                    android:contentDescription="@string/marvin_logo_description"
                     android:padding="8dp"
                     android:scaleType="fitCenter"
-                    android:src="@drawable/ic_aura_logo" />
+                    android:src="@drawable/ic_marvin_logo" />
 
-                <TextView
+                <FrameLayout
                     android:layout_width="0dp"
-                    android:layout_height="wrap_content"
+                    android:layout_height="32dp"
                     android:layout_marginStart="12dp"
-                    android:layout_weight="1"
-                    android:text="NIMBUS"
-                    android:textAllCaps="true"
-                    android:textColor="@color/home_panel_title"
-                    android:textSize="15sp"
-                    android:textStyle="bold" />
+                    android:layout_weight="1">
+
+                    <com.example.mobile_assistant.SvgLogoView
+                        android:layout_width="86dp"
+                        android:layout_height="28dp"
+                        android:layout_gravity="center_vertical"
+                        android:contentDescription="@string/marvin_logo_description"
+                        app:svgRawResource="@raw/marvin_wordmark_dark" />
+                </FrameLayout>
 
                 <TextView
                     android:layout_width="wrap_content"
@@ -65,17 +69,26 @@
                     android:textSize="12sp"
                     android:textStyle="bold" />
 
+                <ImageButton
+                    android:id="@+id/btnPreferences"
+                    android:layout_width="36dp"
+                    android:layout_height="36dp"
+                    android:layout_marginStart="10dp"
+                    android:background="?attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Preferences"
+                    android:src="@drawable/ic_settings"
+                    android:tint="@color/home_hero_body"
+                    android:scaleType="center" />
+
             </LinearLayout>
 
-            <TextView
+            <com.example.mobile_assistant.SvgLogoView
                 android:id="@+id/textHomeTitle"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+                android:layout_width="160dp"
+                android:layout_height="52dp"
                 android:layout_marginTop="24dp"
-                android:text="@string/dashboard_title"
-                android:textColor="@color/home_hero_title"
-                android:textSize="32sp"
-                android:textStyle="bold" />
+                android:contentDescription="@string/marvin_logo_description"
+                app:svgRawResource="@raw/marvin_wordmark_dark" />
 
             <TextView
                 android:id="@+id/textHomeSubtitle"
@@ -108,11 +121,24 @@
                 android:textSize="15sp" />
 
             <Button
+                android:id="@+id/btnHomeGoogleLogin"
+                style="@style/Widget.Material3.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="54dp"
+                android:layout_marginTop="16dp"
+                android:text="@string/account_google_continue"
+                android:textColor="@color/home_button_secondary_text"
+                app:icon="@drawable/ic_google_g"
+                app:iconGravity="textStart"
+                app:iconPadding="8dp"
+                app:iconTint="@null" />
+
+            <Button
                 android:id="@+id/btnOpenAssistant"
                 style="@style/Widget.Material3.Button"
                 android:layout_width="match_parent"
                 android:layout_height="54dp"
-                android:layout_marginTop="16dp"
+                android:layout_marginTop="10dp"
                 android:backgroundTint="@color/home_button_primary"
                 android:text="@string/open_assistant_button"
                 android:textColor="@color/home_button_primary_text" />
@@ -180,6 +206,16 @@
                 android:background="@color/home_panel_stroke" />
 
             <include
+                android:id="@+id/rowMemory"
+                layout="@layout/item_settings_row" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginStart="20dp"
+                android:background="@color/home_panel_stroke" />
+
+            <include
                 android:id="@+id/rowSpotify"
                 layout="@layout/item_settings_row" />
 
@@ -191,6 +227,16 @@
 
             <include
                 android:id="@+id/rowGoogle"
+                layout="@layout/item_settings_row" />
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:layout_marginStart="20dp"
+                android:background="@color/home_panel_stroke" />
+
+            <include
+                android:id="@+id/rowAccount"
                 layout="@layout/item_settings_row" />
 
         </LinearLayout>

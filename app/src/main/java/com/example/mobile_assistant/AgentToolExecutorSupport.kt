@@ -21,10 +21,13 @@ internal object AgentToolExecutorSupport {
     }
 
     fun normalizeQuickQuestion(rawQuestion: String): String {
-        val cleaned = rawQuestion.trim().ifBlank { "quick question: can you clarify what to do next?" }
-        val lower = cleaned.lowercase()
-        val prefixed = if (lower.startsWith("quick question")) cleaned else "quick question: $cleaned"
-        return if ("reply in this chat" in prefixed.lowercase() || "reply here" in prefixed.lowercase()) {
+        val question = rawQuestion.trim().ifBlank { "Can you clarify what to do next?" }
+        val prefixed = if (question.startsWith("quick question:", ignoreCase = true)) {
+            question
+        } else {
+            "quick question: $question"
+        }
+        return if (prefixed.contains("Reply in this chat.", ignoreCase = true)) {
             prefixed
         } else {
             "$prefixed Reply in this chat."

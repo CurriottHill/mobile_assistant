@@ -175,7 +175,7 @@ internal class ConversationHistory {
     }
 
     companion object {
-        const val MAX_USER_MESSAGES = 5
+        const val MAX_USER_MESSAGES = 8
         const val MAX_RESULT_DISPLAY_CHARS = 1500
 
         private val HEAVY_KEYS = setOf("screen", "tree", "image_data_url", "image", "screenshot", "base64")

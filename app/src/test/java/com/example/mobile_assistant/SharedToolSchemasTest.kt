@@ -36,21 +36,34 @@ class SharedToolSchemasTest {
         assertEquals(
             setOf(
                 SharedToolSchemas.TOOL_SEARCH_WEB,
+                SharedToolSchemas.TOOL_MEMORY_READ,
+                SharedToolSchemas.TOOL_MEMORY_EDIT,
+                SharedToolSchemas.TOOL_MEMORY_LIST,
+                SharedToolSchemas.TOOL_MEMORY_LINK,
+                SharedToolSchemas.TOOL_MEMORY_SAVE_FACT,
                 SharedToolSchemas.TOOL_CALL_CONTACT,
                 SharedToolSchemas.TOOL_SEND_SMS,
+                SharedToolSchemas.TOOL_SEND_WHATSAPP,
+                SharedToolSchemas.TOOL_SEND_MESSAGE,
                 SharedToolSchemas.TOOL_MAPS_TRAVEL_TIME,
                 SharedToolSchemas.TOOL_SPOTIFY_PLAY_SONG,
                 SharedToolSchemas.TOOL_SPOTIFY_PLAY_ALBUM,
+                SharedToolSchemas.TOOL_SPOTIFY_PLAY_PLAYLIST,
                 SharedToolSchemas.TOOL_SPOTIFY_GET_PLAYBACK_STATE,
                 SharedToolSchemas.TOOL_SPOTIFY_CONTROL_PLAYBACK,
                 SharedToolSchemas.TOOL_SPOTIFY_SET_PLAYBACK_OPTIONS,
                 SharedToolSchemas.TOOL_LIST_APPS,
                 SharedToolSchemas.TOOL_CLIPBOARD_GET,
                 SharedToolSchemas.TOOL_CLIPBOARD_SET,
+                SharedToolSchemas.TOOL_SEARCH_CONTACTS,
                 SharedToolSchemas.TOOL_GET_LOCATION,
                 SharedToolSchemas.TOOL_READ_NOTIFICATIONS,
+                SharedToolSchemas.TOOL_CHECK_EMAILS,
+                SharedToolSchemas.TOOL_CHECK_CALENDAR,
+                SharedToolSchemas.TOOL_GET_WEATHER,
                 ChatPrompt.TOOL_OPEN_APP,
                 ChatPrompt.TOOL_OPEN_NOTIFICATIONS,
+                ChatPrompt.TOOL_READ_SCREEN,
                 ChatPrompt.TOOL_ASK_USER,
                 ChatPrompt.TOOL_USE_PHONE
             ),
@@ -68,22 +81,45 @@ class SharedToolSchemasTest {
         assertTrue(instructions.contains("Phone time zone:"))
         assertTrue(instructions.contains("Use this time zone for times and scheduling"))
         assertTrue(instructions.contains("call use_phone"))
-        assertTrue(instructions.contains("call openapp directly"))
-        assertTrue(instructions.contains("call open_notifications directly"))
         assertTrue(instructions.contains("send_sms"))
         assertTrue(instructions.contains("call_contact"))
-        assertTrue(instructions.contains("call get_location directly"))
-        assertTrue(instructions.contains("maps_travel_time directly"))
-        assertTrue(instructions.contains("allow_approximate=true"))
+        assertTrue(instructions.contains("memory_read"))
+        assertTrue(instructions.contains("memory_save_fact"))
+        assertTrue(instructions.contains("main.md"))
+        assertTrue(instructions.contains("their bodies live in routines.md"))
+        assertTrue(instructions.contains("Default messaging app"))
+        assertTrue(instructions.contains("text is not explicit SMS"))
         assertTrue(instructions.contains("spotify_control_playback"))
         assertTrue(instructions.contains("spotify_play_album"))
+        assertTrue(instructions.contains("read_screen"))
         assertTrue(instructions.contains("read_notifications"))
-        assertTrue(instructions.contains("Maps navigation"))
-        assertTrue(instructions.contains("Spotify playlist creation or editing"))
-        assertTrue(instructions.contains("email lookup or reading"))
-        assertTrue(instructions.contains("calendar lookup"))
         assertTrue(instructions.contains("timers, alarms"))
         assertTrue(instructions.contains("Chat mode may use direct tools in a short loop."))
+    }
+
+    @Test
+    fun promptsInjectSoulAndMainButNotRoutineBody() {
+        val snapshot = MemoryPromptSnapshot(
+            soulMarkdown = "# Soul\nBe crisp.",
+            mainMarkdown = """
+                # Main Memory
+                Default messaging app: whatsapp
+
+                ## Routines
+                - Commute to Work: read [[routines.md#commute-to-work]]
+            """.trimIndent()
+        )
+
+        val chatInstructions = ChatPrompt.instructions(snapshot)
+        val agentInstructions = AgentTooling.systemPrompt("commute", snapshot)
+
+        assertTrue(chatInstructions.contains("Be crisp."))
+        assertTrue(chatInstructions.contains("Default messaging app: whatsapp"))
+        assertTrue(agentInstructions.contains("Be crisp."))
+        assertTrue(agentInstructions.contains("Default messaging app: whatsapp"))
+        assertFalse(chatInstructions.contains("Call check_calendar with range today."))
+        assertFalse(agentInstructions.contains("Call check_calendar with range today."))
+        assertFalse(agentInstructions.contains("ultimate voice assistant"))
     }
 
     @Test
@@ -104,6 +140,7 @@ class SharedToolSchemasTest {
         assertTrue(toolNames.contains(SharedToolSchemas.TOOL_CALL_CONTACT))
         assertTrue(toolNames.contains(SharedToolSchemas.TOOL_SEND_SMS))
         assertTrue(toolNames.contains(SharedToolSchemas.TOOL_SEND_WHATSAPP))
+        assertTrue(toolNames.contains(SharedToolSchemas.TOOL_SEND_MESSAGE))
         assertTrue(toolNames.contains(SharedToolSchemas.TOOL_START_NAVIGATION))
         assertTrue(toolNames.contains(SharedToolSchemas.TOOL_CLOCK_TIMER))
         assertTrue(toolNames.contains(SharedToolSchemas.TOOL_CLOCK_ALARM))
@@ -126,6 +163,30 @@ class SharedToolSchemasTest {
         assertTrue(toolNames.contains(SharedToolSchemas.TOOL_CHECK_CALENDAR))
         assertTrue(toolNames.contains(SharedToolSchemas.TOOL_GET_LOCATION))
         assertTrue(toolNames.contains(SharedToolSchemas.TOOL_READ_NOTIFICATIONS))
+        assertTrue(toolNames.contains(SharedToolSchemas.TOOL_GET_WEATHER))
+        assertTrue(toolNames.contains(SharedToolSchemas.TOOL_MEMORY_READ))
+        assertTrue(toolNames.contains(SharedToolSchemas.TOOL_MEMORY_EDIT))
+        assertTrue(toolNames.contains(SharedToolSchemas.TOOL_MEMORY_LIST))
+        assertTrue(toolNames.contains(SharedToolSchemas.TOOL_MEMORY_LINK))
+        assertTrue(toolNames.contains(SharedToolSchemas.TOOL_MEMORY_SAVE_FACT))
+        assertFalse(toolNames.contains("memory_open"))
+    }
+
+    @Test
+    fun messagingToolDescriptionsUseMemoryFirstForGenericText() {
+        val smsTool = findToolDefinition(SharedToolSchemas.TOOL_SEND_SMS)
+        val whatsappTool = findToolDefinition(SharedToolSchemas.TOOL_SEND_WHATSAPP)
+        val contactsTool = findToolDefinition(SharedToolSchemas.TOOL_SEARCH_CONTACTS)
+        val instructions = AgentTooling.systemPrompt("message Alice")
+
+        assertTrue(smsTool.getString("description").contains("explicit SMS"))
+        assertTrue(smsTool.getString("description").contains("Do not assume generic 'text' means SMS"))
+        assertFalse(smsTool.getString("description").contains("Prefer this over send_whatsapp_message"))
+        assertTrue(whatsappTool.getString("description").contains("default"))
+        assertTrue(contactsTool.getString("description").contains("main.md"))
+        assertTrue(contactsTool.getString("description").contains("memory_save_fact"))
+        assertTrue(instructions.contains("If the contact is already present in memory, do not call search_contacts."))
+        assertTrue(instructions.contains("The word text is not explicit SMS."))
     }
 
     @Test
@@ -163,13 +224,13 @@ class SharedToolSchemasTest {
         val createProperties = createTool.getJSONObject("parameters").getJSONObject("properties")
         val instructions = AgentTooling.systemPrompt("update my calendar")
 
-        assertTrue(createTool.getString("description").contains("return the drafted event details"))
+        assertTrue(createTool.getString("description").contains("automatically tap Save"))
         assertFalse(createProperties.has("confirm_save"))
         assertTrue(editTool.getString("description").contains("Prefer event_link from check_calendar"))
-        assertTrue(deleteTool.getString("description").contains("never presses Delete"))
-        assertTrue(instructions.contains("calendar_create_event returns the drafted event details"))
+        assertTrue(deleteTool.getString("description").contains("deletion review"))
+        assertTrue(instructions.contains("calendar_create_event and calendar_edit_event open the editor"))
         assertTrue(instructions.contains("call calendar_edit_event or calendar_delete_event"))
-        assertTrue(instructions.contains("use check_calendar to identify the target event"))
+        assertTrue(instructions.contains("use check_calendar to get its html_link"))
     }
 
     @Test

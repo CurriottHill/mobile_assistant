@@ -29,14 +29,18 @@ object SetupChecks {
         Manifest.permission.RECORD_AUDIO,
         Manifest.permission.READ_CONTACTS,
         Manifest.permission.CALL_PHONE,
-        Manifest.permission.SEND_SMS
+        Manifest.permission.SEND_SMS,
+        Manifest.permission.READ_CALENDAR,
+        Manifest.permission.WRITE_CALENDAR
     )
 
     private val PERMISSION_LABELS = linkedMapOf(
         Manifest.permission.RECORD_AUDIO to "microphone",
         Manifest.permission.READ_CONTACTS to "contacts",
         Manifest.permission.CALL_PHONE to "phone",
-        Manifest.permission.SEND_SMS to "SMS"
+        Manifest.permission.SEND_SMS to "SMS",
+        Manifest.permission.READ_CALENDAR to "calendar",
+        Manifest.permission.WRITE_CALENDAR to "calendar editing"
     )
 
     fun isAccessibilityEnabled(context: Context): Boolean {

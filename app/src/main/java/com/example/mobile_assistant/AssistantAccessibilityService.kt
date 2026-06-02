@@ -17,7 +17,9 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.animation.OvershootInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.Toast
 import androidx.core.content.ContextCompat
+import com.example.mobile_assistant.auth.AuthCoordinator
 import kotlin.math.hypot
 
 /**
@@ -116,6 +118,11 @@ class AssistantAccessibilityService : AccessibilityService() {
     // ─── Public API ──────────────────────────────────────────────────────────
 
     fun showOverlay() {
+        if (AuthCoordinator.currentUser(this) == null) {
+            hideOverlay()
+            redirectToLogin()
+            return
+        }
         if (overlayController != null) {
             if (isCollapsed) {
                 expandOverlay()
@@ -151,6 +158,19 @@ class AssistantAccessibilityService : AccessibilityService() {
         )
     }
 
+    private fun redirectToLogin() {
+        Toast.makeText(this, getString(R.string.account_sign_in_required), Toast.LENGTH_LONG).show()
+        startActivity(
+            Intent(this, OnboardingActivity::class.java)
+                .putExtra(OnboardingActivity.EXTRA_INITIAL_STEP, OnboardingActivity.STEP_AUTH_WELCOME)
+                .addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
+        )
+    }
+
     fun hideOverlay() {
         val controller = overlayController ?: return
         controller.destroy()
@@ -159,6 +179,16 @@ class AssistantAccessibilityService : AccessibilityService() {
         overlayParams = null
         removeBubble()
         isCollapsed = false
+    }
+
+    /** Entry point for the system assist gesture (long-press power). Opens the overlay if
+     *  it isn't already up, and if the overlay was already visible, opens the mic. */
+    fun handleAssistGesture() {
+        val wasOpen = overlayController != null
+        showOverlay()
+        if (wasOpen) {
+            overlayController?.onAssistGestureTriggered()
+        }
     }
 
     fun getUnderlyingAppRoot(): AccessibilityNodeInfo? {

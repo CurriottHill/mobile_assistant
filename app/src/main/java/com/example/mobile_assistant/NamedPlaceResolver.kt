@@ -44,12 +44,33 @@ internal object NamedPlaceResolver {
         val namedType = NAMED_PLACE_TYPES[lower]
             ?: return Resolution(value = trimmed, resolved = true)
 
+        lookupMemoryNamedPlace(context, lower)?.let { memoryPlace ->
+            return Resolution(value = memoryPlace, resolved = true)
+        }
+
         val address = lookupProfilePostalAddress(context, namedType)
         return if (address.isNullOrBlank()) {
             Resolution(value = trimmed, resolved = false)
         } else {
             Resolution(value = address, resolved = true)
         }
+    }
+
+    private fun lookupMemoryNamedPlace(context: Context, lower: String): String? {
+        val key = when (lower) {
+            "home" -> "Home"
+            "work" -> "Work"
+            else -> return null
+        }
+        val main = runCatching {
+            MemoryRepository(context).promptSnapshot().mainMarkdown
+        }.getOrNull().orEmpty()
+        val regex = Regex("""(?im)^${Regex.escape(key)}:\s*(.+?)\s*$""")
+        return regex.find(main)
+            ?.groupValues
+            ?.getOrNull(1)
+            ?.trim()
+            ?.takeIf { it.isNotBlank() }
     }
 
     private fun lookupProfilePostalAddress(context: Context, preferredType: Int): String? {

@@ -68,6 +68,7 @@
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
+        android:networkSecurityConfig="@xml/network_security_config"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
         android:theme="@style/Theme.MobileAssistant">
@@ -114,6 +115,10 @@
             android:exported="false"
             android:launchMode="singleTop" />
         <activity
+            android:name=".AccountActivity"
+            android:exported="false"
+            android:parentActivityName=".MainActivity" />
+        <activity
             android:name=".AccessibilitySettingsActivity"
             android:exported="false"
             android:parentActivityName=".MainActivity" />
@@ -135,6 +140,10 @@
             android:parentActivityName=".MainActivity" />
         <activity
             android:name=".GoogleSettingsActivity"
+            android:exported="false"
+            android:parentActivityName=".MainActivity" />
+        <activity
+            android:name=".AppSettingsActivity"
             android:exported="false"
             android:parentActivityName=".MainActivity" />
         <activity

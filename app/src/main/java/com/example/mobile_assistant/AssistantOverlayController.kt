@@ -11,6 +11,7 @@ import android.graphics.LinearGradient
 import android.graphics.Shader
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
+import android.graphics.drawable.LayerDrawable
 import android.graphics.drawable.ShapeDrawable
 import android.graphics.drawable.shapes.RectShape
 import android.media.AudioAttributes
@@ -20,7 +21,6 @@ import android.media.AudioManager
 import android.media.AudioTrack
 import android.media.MediaRecorder
 import android.net.Uri
-import android.util.Base64
 import android.os.Build
 import android.content.res.ColorStateList
 import android.view.Gravity
@@ -50,11 +50,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.MultipartBody
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 
@@ -74,18 +73,20 @@ class AssistantOverlayController(
 
     companion object {
         private const val SAMPLE_RATE_HZ = 16_000
-        private const val TRANSCRIPTION_ENDPOINT = "https://api.openai.com/v1/audio/transcriptions"
-        private const val TTS_ENDPOINT = "https://api.cartesia.ai/tts/sse"
-        private const val TTS_MODEL = "sonic-3-2026-01-12"
-        private const val TTS_VOICE_ID = "e07c00bc-4134-4eae-9ea4-1a55fb45746b" // Default english voice — change to your preferred voice UUID
+        private const val ASSEMBLY_UPLOAD_ENDPOINT = "https://api.assemblyai.com/v2/upload"
+        private const val ASSEMBLY_TRANSCRIPT_ENDPOINT = "https://api.assemblyai.com/v2/transcript"
+        private const val ASSEMBLY_STT_MODEL = "universal-2"
+        private const val ASSEMBLY_TRANSCRIPT_POLL_INTERVAL_MS = 500L
+        private const val ASSEMBLY_TRANSCRIPT_MAX_POLLS = 60
+        private const val TTS_BASE_URL = "https://api.deepgram.com/v1/speak"
+        private const val TTS_DEFAULT_VOICE = "aura-2-asteria-en"
         private const val TTS_SAMPLE_RATE = 24000
-        private const val CARTESIA_VERSION = "2024-11-13"
 
         private const val MIN_SPEECH_DURATION_MS = 200L
         private const val MIN_RECORDING_DURATION_MS = 1500L
         private const val SILENCE_STOP_MS   = 700L
         private const val MAX_RECORDING_MS  = 15_000L
-        private const val SPEECH_THRESHOLD  = 400
+        private const val SPEECH_THRESHOLD  = 1000
         private const val AUDIO_DUCK_FOCUS_GAIN = AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK
     }
 
@@ -98,6 +99,7 @@ class AssistantOverlayController(
     private val httpClient = OkHttpClient()
     private val spotifyService by lazy { SpotifyService(service.applicationContext) }
     private val googleAccountService by lazy { GoogleAccountService(service.applicationContext) }
+    private val backendClient by lazy { MobileBackendClient(service.applicationContext) }
     private val audioManager =
         service.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val inputMethodManager =
@@ -165,6 +167,8 @@ class AssistantOverlayController(
     private var speechDurationInCurrentRecordingMs = 0L
     private var isAgentPaused = false
     private var isAgentRunning = false
+    private var activeAssistantTaskId: String? = null
+    private var assistantTaskRequestSeq = 0L
     private val activeAudioDuckReasons = mutableSetOf<AudioDuckReason>()
     private var hasRequestedAudioDuck = false
 
@@ -198,14 +202,12 @@ class AssistantOverlayController(
 
                 override fun onAgentResponse(response: String) {
                     appendAssistantMessage(response)
+                    speakAssistantResponse(response)
+                    completeActiveAssistantTask(finalResponse = response)
                 }
 
-                override fun onToolCalled(toolName: String) {
-                    appendToolTag(toolName)
-                }
-
-                override fun onAgentReasoning(text: String) {
-                    appendReasoningMessage(text)
+                override fun onToolCalled(toolName: String, argsJson: String) {
+                    appendToolTag(toolName, argsJson)
                 }
 
                 override fun onAgentUiAction(action: AssistantUiAction) {
@@ -215,6 +217,7 @@ class AssistantOverlayController(
                 override fun onAgentSpeak(message: String) {
                     appendAssistantMessage(message)
                     speakAssistantResponse(message)
+                    prepareForAskUserInput()
                 }
 
                 override fun onAgentTaskComplete(summary: String) {
@@ -223,29 +226,44 @@ class AssistantOverlayController(
                     } else {
                         service.getString(R.string.assist_task_complete_with_summary, summary)
                     }
+                    completeActiveAssistantTask(finalResponse = completionText)
                     appendAssistantMessage(completionText)
-                    speakAssistantResponse(completionText)
+                    if (summary.isNotBlank()) speakAssistantResponse(summary)
                 }
 
-                override fun onAgentAskUser(question: String) {
+                override fun onAgentAskUser(question: String, autoListen: Boolean) {
                     appendAssistantMessage(question)
                     speakAssistantResponse(question)
-                    prepareForAskUserInput()
+                    if (autoListen) prepareForAskUserInput()
+                }
+
+                override fun onAgentCutoff(reason: String, message: String) {
+                    completeActiveAssistantTask(
+                        status = "cutoff",
+                        finalResponse = message,
+                        cutoffReason = reason
+                    )
+                    appendAssistantMessage(message)
+                    speakAssistantResponse(message)
                 }
 
                 override fun onAgentApiKeyMissing() {
                     Toast.makeText(service, service.getString(R.string.assist_key_missing_short), Toast.LENGTH_SHORT).show()
                 }
 
-                override fun onAgentFallbackToOpenAi() {
-                    appendFallbackTag()
+                override fun onAgentProviderTag(providerLabel: String) {
+                    appendProviderTag(providerLabel)
                 }
 
                 override fun onAgentError(message: String?) {
                     val detail = message?.take(1200) ?: "Unknown error"
                     val errorText = "${service.getString(R.string.assist_response_failed)}: $detail. Say \"try again\" to continue."
+                    completeActiveAssistantTask(
+                        status = "failed",
+                        finalResponse = errorText,
+                        metadata = JSONObject().put("errorMessage", detail)
+                    )
                     appendAssistantMessage(errorText)
-                    speakAssistantResponse("${service.getString(R.string.assist_response_failed)}. Say try again to continue.")
                     Toast.makeText(service, service.getString(R.string.assist_response_failed), Toast.LENGTH_SHORT).show()
                 }
 
@@ -253,7 +271,8 @@ class AssistantOverlayController(
             screenReader = {
                 val svc = AssistantAccessibilityService.instance
                 if (svc != null) ScreenReader.readScreen(svc) else null
-            }
+            },
+            usageTaskIdProvider = { activeAssistantTaskId }
         )
 
         setupClickListeners()
@@ -279,9 +298,12 @@ class AssistantOverlayController(
         micButton.setOnClickListener { handleMicClick() }
         keyboardButton.setOnClickListener { handleKeyboardToggle() }
         inputSpacer.setOnClickListener { if (!isKeyboardMode) toggleKeyboardMode() }
+        textInput.setOnFocusChangeListener { _, hasFocus -> if (hasFocus && !isKeyboardMode) enterBottomKeyboardMode() }
         cancelListeningButton.setOnClickListener { cancelAudioCaptureAndTranscription() }
         cardMicButton.setOnClickListener { onCardMicClicked() }
         cardKeyboardButton.setOnClickListener { toggleCardKeyboardMode() }
+        cardInputSpacer.setOnClickListener { if (!isCardKeyboardMode) toggleCardKeyboardMode() }
+        cardTextInput.setOnFocusChangeListener { _, hasFocus -> if (hasFocus && !isCardKeyboardMode) enterCardKeyboardMode() }
         cardCancelListeningButton.setOnClickListener { cancelAudioCaptureAndTranscription() }
         gradientBg.setOnClickListener { animateOutThen { onCollapse() } }
     }
@@ -298,6 +320,73 @@ class AssistantOverlayController(
                 sendCardTypedMessage()
                 true
             } else false
+        }
+    }
+
+    private fun submitUserMessage(text: String) {
+        scope.launch {
+            if (activeAssistantTaskId != null || isAgentRunning) {
+                agentManager.sendToAgent(text)
+                return@launch
+            }
+            val requestSeq = ++assistantTaskRequestSeq
+            openChatCard()
+            agentManager.sendToAgent(text)
+            startAssistantTaskInBackground(text, requestSeq)
+        }
+    }
+
+    private fun startAssistantTaskInBackground(text: String, requestSeq: Long) {
+        scope.launch {
+            when (
+                val result = backendClient.startAssistantTask(
+                    userPrompt = text,
+                    taskType = "hybrid",
+                    mainModel = AgentModelConfig.AGENT_MODEL,
+                    metadata = JSONObject()
+                )
+            ) {
+                is AssistantTaskStartResult.Allowed -> {
+                    if (requestSeq == assistantTaskRequestSeq && isAgentRunning) {
+                        activeAssistantTaskId = result.taskId
+                    } else {
+                        runCatching {
+                            backendClient.finishAssistantTask(
+                                taskId = result.taskId,
+                                status = "completed",
+                                cutoffReason = "assistant_finished_before_task_start_returned"
+                            )
+                        }
+                    }
+                }
+                is AssistantTaskStartResult.OverLimit -> {
+                    appendAssistantMessage(service.getString(R.string.account_limit_reached))
+                }
+                is AssistantTaskStartResult.Failed -> {
+                    android.util.Log.w("AssistantOverlayController", "Could not start assistant task: ${result.message}")
+                }
+            }
+        }
+    }
+
+    private fun completeActiveAssistantTask(
+        status: String = "completed",
+        finalResponse: String? = null,
+        cutoffReason: String? = null,
+        metadata: JSONObject? = null
+    ) {
+        val taskId = activeAssistantTaskId ?: return
+        activeAssistantTaskId = null
+        scope.launch {
+            runCatching {
+                backendClient.finishAssistantTask(
+                    taskId = taskId,
+                    status = status,
+                    finalResponse = finalResponse,
+                    cutoffReason = cutoffReason,
+                    metadata = metadata
+                )
+            }
         }
     }
 
@@ -354,22 +443,46 @@ class AssistantOverlayController(
         agentManager.runPhoneTaskDirectly(text)
     }
 
+    /** Long-press-power (assist) gesture while the overlay is already visible: open the mic. */
+    fun onAssistGestureTriggered() {
+        if (isListening) return
+        if (isAgentRunning) {
+            agentManager.pauseAgent()
+            completeActiveAssistantTask(
+                status = "cancelled",
+                cutoffReason = "user_paused_agent"
+            )
+            isAgentRunning = false
+            isAgentPaused = false
+            clearCardStatus()
+            updateMicStopState()
+        }
+        if (isCardKeyboardMode) exitCardKeyboardMode()
+        if (isKeyboardMode) toggleKeyboardMode()
+        resetTranscript()
+        ensureMicPermissionThenListen()
+    }
+
     // ─── Bottom-panel input ──────────────────────────────────────────────────
 
     private fun sendTypedMessage(): Boolean {
         val text = getTrimmedInput(textInput)
         if (text.isBlank()) return false
         lastUserInputUsedKeyboard = true
-        agentManager.sendToAgent(text)
         textInput.text?.clear()
         hideKeyboard(textInput)
         textInput.clearFocus()
+        submitUserMessage(text)
         return true
     }
 
     private fun handleMicClick() {
         if (isAgentRunning) {
             agentManager.pauseAgent()
+            completeActiveAssistantTask(
+                status = "cancelled",
+                cutoffReason = "user_paused_agent"
+            )
             isAgentRunning = false
             isAgentPaused = false
             clearCardStatus()
@@ -555,10 +668,10 @@ class AssistantOverlayController(
     // ─── Transcription ───────────────────────────────────────────────────────
 
     private fun transcribeAudio(audioFile: File) {
-        val apiKey = BuildConfig.OPENAI_API_KEY.trim()
+        val apiKey = BuildConfig.ASSEMBLY_AI_API_KEY.trim()
         if (apiKey.isBlank()) {
             cleanupAudioFile(audioFile)
-            Toast.makeText(service, service.getString(R.string.assist_openai_key_missing), Toast.LENGTH_SHORT).show()
+            Toast.makeText(service, service.getString(R.string.assist_stt_key_missing), Toast.LENGTH_SHORT).show()
             return
         }
 
@@ -570,7 +683,7 @@ class AssistantOverlayController(
 
             try {
                 val transcript = runCatching {
-                    transcribeWithWhisper(apiKey, audioFile)
+                    transcribeWithAssemblyAi(apiKey, audioFile)
                 }.getOrDefault("")
 
                 if (!isActive) return@launch
@@ -583,7 +696,7 @@ class AssistantOverlayController(
 
                 updateTranscript(transcript)
                 lastUserInputUsedKeyboard = false
-                agentManager.sendToAgent(transcript)
+                submitUserMessage(transcript)
             } finally {
                 cleanupAudioFile(audioFile)
                 isTranscribing = false
@@ -592,32 +705,81 @@ class AssistantOverlayController(
         }
     }
 
-    private suspend fun transcribeWithWhisper(apiKey: String, audioFile: File): String {
+    private suspend fun transcribeWithAssemblyAi(apiKey: String, audioFile: File): String {
         return withContext(Dispatchers.IO) {
-            val requestBody = MultipartBody.Builder()
-                .setType(MultipartBody.FORM)
-                .addFormDataPart("model", "whisper-1")
-                .addFormDataPart(
-                    "file",
-                    audioFile.name,
-                    audioFile.asRequestBody("audio/mp4".toMediaType())
-                )
-                .build()
+            val uploadUrl = uploadAudioToAssemblyAi(apiKey, audioFile)
+            val transcriptId = submitAssemblyAiTranscript(apiKey, uploadUrl)
+            pollAssemblyAiTranscript(apiKey, transcriptId)
+        }
+    }
 
-            val request = Request.Builder()
-                .url(TRANSCRIPTION_ENDPOINT)
-                .addHeader("Authorization", "Bearer $apiKey")
-                .post(requestBody)
-                .build()
+    private fun uploadAudioToAssemblyAi(apiKey: String, audioFile: File): String {
+        val requestBody = audioFile.readBytes().toRequestBody("application/octet-stream".toMediaType())
+        val request = Request.Builder()
+            .url(ASSEMBLY_UPLOAD_ENDPOINT)
+            .addHeader("Authorization", apiKey)
+            .addHeader("Content-Type", "application/octet-stream")
+            .post(requestBody)
+            .build()
 
+        httpClient.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IllegalStateException("AssemblyAI upload HTTP ${response.code}: $body")
+            }
+            return JSONObject(body).getString("upload_url")
+        }
+    }
+
+    private fun submitAssemblyAiTranscript(apiKey: String, uploadUrl: String): String {
+        val requestBody = JSONObject()
+            .put("audio_url", uploadUrl)
+            .put("speech_models", JSONArray().put(ASSEMBLY_STT_MODEL))
+            .put("format_text", true)
+            .put("punctuate", true)
+            .toString()
+            .toRequestBody("application/json".toMediaType())
+
+        val request = Request.Builder()
+            .url(ASSEMBLY_TRANSCRIPT_ENDPOINT)
+            .addHeader("Authorization", apiKey)
+            .addHeader("Content-Type", "application/json")
+            .post(requestBody)
+            .build()
+
+        httpClient.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IllegalStateException("AssemblyAI transcript HTTP ${response.code}: $body")
+            }
+            return JSONObject(body).getString("id")
+        }
+    }
+
+    private suspend fun pollAssemblyAiTranscript(apiKey: String, transcriptId: String): String {
+        val request = Request.Builder()
+            .url("$ASSEMBLY_TRANSCRIPT_ENDPOINT/$transcriptId")
+            .addHeader("Authorization", apiKey)
+            .build()
+
+        repeat(ASSEMBLY_TRANSCRIPT_MAX_POLLS) {
             httpClient.newCall(request).execute().use { response ->
                 val body = response.body?.string().orEmpty()
                 if (!response.isSuccessful) {
-                    throw IllegalStateException("HTTP ${response.code}: $body")
+                    throw IllegalStateException("AssemblyAI transcript poll HTTP ${response.code}: $body")
                 }
-                JSONObject(body).optString("text").trim()
+                val json = JSONObject(body)
+                when (json.optString("status")) {
+                    "completed" -> return json.optString("text").trim()
+                    "error" -> throw IllegalStateException(
+                        json.optString("error").ifBlank { "AssemblyAI transcription failed." }
+                    )
+                }
             }
+            delay(ASSEMBLY_TRANSCRIPT_POLL_INTERVAL_MS)
         }
+
+        throw IllegalStateException("AssemblyAI transcription timed out.")
     }
 
     private fun cleanupAudioFile(file: File?) {
@@ -625,12 +787,13 @@ class AssistantOverlayController(
         runCatching { file.delete() }
     }
 
-    // ─── Text-to-speech (Cartesia streaming) ───────────────────────────────
+    // ─── Text-to-speech (Deepgram text-to-speech) ──────────────────────────────────
 
     private fun speakAssistantResponse(text: String) {
+        if (lastUserInputUsedKeyboard) return
         if (text.isBlank()) return
 
-        val apiKey = BuildConfig.CARTESIA_API_KEY.trim()
+        val apiKey = BuildConfig.DEEPGRAM_API_KEY.trim()
         if (apiKey.isBlank()) return
 
         ttsJob?.cancel()
@@ -639,7 +802,7 @@ class AssistantOverlayController(
 
         ttsJob = scope.launch {
             try {
-                runCatching { streamCartesiaTts(apiKey, text) }
+                runCatching { streamDeepgramTts(apiKey, text) }
             } finally {
                 ttsIsPlaying = false
                 setAudioDucking(AudioDuckReason.ASSISTANT_SPEAKING, active = false)
@@ -647,27 +810,21 @@ class AssistantOverlayController(
         }
     }
 
-    private suspend fun streamCartesiaTts(apiKey: String, text: String) = withContext(Dispatchers.IO) {
+    private suspend fun streamDeepgramTts(apiKey: String, text: String) = withContext(Dispatchers.IO) {
+        val ttsPrefs = service.getSharedPreferences("marvin_prefs", android.content.Context.MODE_PRIVATE)
+        val voice = ttsPrefs.getString("pref_tts_voice", TTS_DEFAULT_VOICE) ?: TTS_DEFAULT_VOICE
+        val speed = ttsPrefs.getFloat("pref_tts_speed", 1.0f)
+        val speedParam = "%.2f".format(speed)
+        val ttsUrl = "$TTS_BASE_URL?model=$voice&encoding=linear16&sample_rate=24000&container=none&speed=$speedParam"
+
         val requestBody = JSONObject()
-            .put("model_id", TTS_MODEL)
-            .put("transcript", text)
-            .put("voice", JSONObject()
-                .put("mode", "id")
-                .put("id", TTS_VOICE_ID)
-            )
-            .put("output_format", JSONObject()
-                .put("container", "raw")
-                .put("encoding", "pcm_s16le")
-                .put("sample_rate", TTS_SAMPLE_RATE)
-            )
-            .put("language", "en")
+            .put("text", text)
             .toString()
             .toRequestBody("application/json".toMediaType())
 
         val request = Request.Builder()
-            .url(TTS_ENDPOINT)
-            .addHeader("X-API-Key", apiKey)
-            .addHeader("Cartesia-Version", CARTESIA_VERSION)
+            .url(ttsUrl)
+            .addHeader("Authorization", "Token $apiKey")
             .post(requestBody)
             .build()
 
@@ -705,30 +862,11 @@ class AssistantOverlayController(
                     val errorBody = response.body?.string().orEmpty()
                     throw IllegalStateException("HTTP ${response.code}: $errorBody")
                 }
-
-                val source = response.body?.source()
-                    ?: throw IllegalStateException("Empty response body")
-
-                while (true) {
-                    val line = source.readUtf8Line() ?: break
-                    if (!line.startsWith("data:")) continue
-
-                    val data = line.removePrefix("data:").trim()
-                    if (data.isBlank()) continue
-
-                    val event = runCatching { JSONObject(data) }.getOrNull() ?: continue
-                    val type = event.optString("type")
-
-                    when (type) {
-                        "chunk" -> {
-                            val b64 = event.optString("data")
-                            if (b64.isNotBlank()) {
-                                val pcmBytes = Base64.decode(b64, Base64.DEFAULT)
-                                audioTrack.write(pcmBytes, 0, pcmBytes.size)
-                            }
-                        }
-                        "done" -> break
-                        "error" -> break
+                response.body?.byteStream()?.use { stream ->
+                    val buffer = ByteArray(4096)
+                    var n: Int
+                    while (stream.read(buffer).also { n = it } != -1) {
+                        audioTrack.write(buffer, 0, n)
                     }
                 }
             }
@@ -982,29 +1120,30 @@ class AssistantOverlayController(
         }
     }
 
-    private fun appendReasoningMessage(text: String) {
-        if (text.isBlank()) return
-        val bubble = addChatBubble(
-            text,
-            color(R.color.assistant_code_text),
-            13f,
-            color(R.color.assistant_reasoning_bg),
-            1.4f
-        ) {
-            width = LinearLayout.LayoutParams.MATCH_PARENT
-            setMargins(0, dp(4), dp(52), dp(4))
-        }
-        bubble.setTypeface(bubble.typeface, Typeface.ITALIC)
-    }
-
-    private fun appendToolTag(toolName: String) {
+    private fun appendToolTag(toolName: String, argsJson: String) {
+        val chip = ToolChipCatalog.chipFor(toolName, argsJson) ?: return
         val tagView = TextView(service).apply {
-            text = toolName
+            text = chip.label
             setTextColor(color(R.color.assistant_code_text))
             textSize = 11f
-            typeface = Typeface.MONOSPACE
-            setPadding(dp(10), dp(5), dp(10), dp(5))
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(8), dp(5), dp(12), dp(5))
             background = roundedBubble(color(R.color.assistant_code_bg))
+            ContextCompat.getDrawable(service, chip.iconRes)?.mutate()?.let { icon ->
+                val accent = color(chip.tintRes)
+                icon.setTint(accent)
+                val tile = GradientDrawable().apply {
+                    shape = GradientDrawable.RECTANGLE
+                    cornerRadius = dp(6).toFloat()
+                    setColor(Color.argb(38, Color.red(accent), Color.green(accent), Color.blue(accent)))
+                }
+                val tileDrawable = LayerDrawable(arrayOf(tile, icon)).apply {
+                    setLayerInset(1, dp(4), dp(4), dp(4), dp(4))
+                    setBounds(0, 0, dp(22), dp(22))
+                }
+                setCompoundDrawables(tileDrawable, null, null, null)
+                compoundDrawablePadding = dp(7)
+            }
         }
         tagView.layoutParams = LinearLayout.LayoutParams(
             LinearLayout.LayoutParams.WRAP_CONTENT,
@@ -1024,9 +1163,9 @@ class AssistantOverlayController(
         constrainCardHeight()
     }
 
-    private fun appendFallbackTag() {
+    private fun appendProviderTag(providerLabel: String) {
         val tagView = TextView(service).apply {
-            text = "via ChatGPT"
+            text = "using $providerLabel"
             setTextColor(color(R.color.assistant_code_text))
             textSize = 11f
             typeface = Typeface.MONOSPACE
@@ -1308,9 +1447,9 @@ class AssistantOverlayController(
         if (text.isBlank()) return
         lastUserInputUsedKeyboard = true
         cardTextInput.text?.clear()
-        agentManager.sendToAgent(text)
         hideKeyboard(cardTextInput)
         cardTextInput.clearFocus()
+        submitUserMessage(text)
     }
 
     private fun enterBottomKeyboardMode() {
@@ -1394,7 +1533,7 @@ class AssistantOverlayController(
      *  left the surface faded/offset. */
     fun replayEntrance() = playEntranceAnimation()
 
-    /** Calm Nimbus entrance: scrim fades in, the card glides up and assembles with a light stagger. */
+    /** Calm marvin entrance: scrim fades in, the card glides up and assembles with a light stagger. */
     private fun playEntranceAnimation() {
         micButton.scaleX = 1f
         micButton.scaleY = 1f

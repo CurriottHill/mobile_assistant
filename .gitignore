@@ -1,21 +1,30 @@
+# Local machine state
+.DS_Store
 *.iml
-.gradle
-/local.properties
 .claude/
 .kotlin/
-app/release/*.apk
-app/release/baselineProfiles/
-/.idea/workspace.xml
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
-.DS_Store
-/build
-/captures
-app/build
-.externalNativeBuild
-.cxx
+
+# IDEs
+.idea/
+.vscode/
+
+# Android/Gradle build output
+.gradle/
+build/
+app/build/
+captures/
+.externalNativeBuild/
+.cxx/
+app/release/
+
+# Local configuration and credentials
 local.properties
+app/google-services.json
+*.jks
+*.keystore
+*.p12
+*.pem
+
+# Generated evaluation exports
+evals.tar
+evals_export/

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Nimbus — warm-brown brand surface, matched to the home page (identical in light & night) -->
+    <!-- marvin — warm-brown brand surface, matched to the home page (identical in light & night) -->
     <color name="assistant_primary">#A98467</color>
     <color name="assistant_secondary">#C97E5A</color>
     <color name="assistant_accent">#A98467</color>
@@ -19,8 +19,10 @@
     <!-- Surfaces -->
     <color name="assistant_surface">#F0E7D8</color>
     <color name="assistant_surface_dim">#F0E7D8</color>
-    <color name="assistant_keyboard_bg">#F0E7D8</color>
+    <color name="assistant_keyboard_bg">#F4EEE5</color>
     <color name="assistant_separator">#EBE1D2</color>
+    <color name="assistant_handle">#CDD0D4</color>
+    <color name="assistant_logo_underline">#D7B488</color>
 
     <!-- Cancel / pill button -->
     <color name="assistant_cancel_bg">#F0E7D8</color>
@@ -71,8 +73,8 @@
     <color name="home_chip_bg">#2E2419</color>
     <color name="home_chip_stroke">#4A3B29</color>
     <color name="home_chip_text">#D8B68A</color>
-    <color name="home_logo_bg">#F2EADD</color>
-    <color name="home_logo_stroke">#F2EADD</color>
+    <color name="home_logo_bg">#4A3B2C</color>
+    <color name="home_logo_stroke">#4A3B2C</color>
     <color name="home_section_title">#F2EADD</color>
     <color name="home_section_meta">#A8967E</color>
     <color name="home_panel_bg">#221C16</color>

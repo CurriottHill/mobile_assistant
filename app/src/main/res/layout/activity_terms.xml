@@ -47,7 +47,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="These Terms of Service (&#8220;Terms&#8221;) govern your use of the Aura mobile application (&#8220;App&#8221;) provided by me (the developer operating as a sole trader). By downloading, installing, or using Aura, you agree to these Terms. If you do not agree, please do not use the App."
+                android:text="These Terms of Service (&#8220;Terms&#8221;) govern your use of the marvin mobile application (&#8220;App&#8221;) provided by me (the developer operating as a sole trader). By downloading, installing, or using marvin, you agree to these Terms. If you do not agree, please do not use the App."
                 android:textColor="@color/assistant_text"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5"
@@ -57,7 +57,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="1. About Aura"
+                android:text="1. About marvin"
                 android:textColor="@color/assistant_branding"
                 android:textSize="15sp"
                 android:textStyle="bold"
@@ -66,7 +66,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Aura is an AI-powered Android assistant that combines voice commands with screen understanding and control. It uses Android&#8217;s Accessibility Service and screenshots to read your screen, navigate apps, tap elements, play music, set reminders, and perform other tasks on your behalf."
+                android:text="marvin, the smart assistant, combines voice commands with screen understanding and control. It uses Android&#8217;s Accessibility Service and screenshots to read your screen, navigate apps, tap elements, play music, set reminders, and perform other tasks on your behalf."
                 android:textColor="@color/assistant_text"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5"
@@ -85,7 +85,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="You must be at least 18 years old to use Aura. By using the App you confirm you meet this requirement."
+                android:text="You must be at least 18 years old to use marvin. By using the App you confirm you meet this requirement."
                 android:textColor="@color/assistant_text"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5"
@@ -104,7 +104,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Aura requires the Android Accessibility Service to function. This permission allows Aura to read screen content and simulate user actions (taps, swipes, text input, etc.). You can revoke this permission at any time in Android Settings. Aura captures and processes screenshots temporarily only when actively assisting you. These are not stored permanently on my servers unless you explicitly ask to save something."
+                android:text="marvin requires the Android Accessibility Service to function. This permission allows marvin to read screen content and simulate user actions (taps, swipes, text input, etc.). You can revoke this permission at any time in Android Settings. marvin captures and processes screenshots temporarily only when actively assisting you. These are not stored permanently on my servers unless you explicitly ask to save something."
                 android:textColor="@color/assistant_text"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5"
@@ -123,7 +123,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Aura supports connecting your own API keys from providers such as Anthropic (Claude), OpenAI, Google Gemini, xAI Grok, or others. You are responsible for obtaining, managing, and paying for your own API keys and must comply with the chosen provider&#8217;s terms of service. API keys are stored encrypted and I do not use them for any purpose other than providing the service."
+                android:text="marvin supports connecting your own API keys from providers such as Anthropic (Claude), OpenAI, Google Gemini, xAI Grok, or others. You are responsible for obtaining, managing, and paying for your own API keys and must comply with the chosen provider&#8217;s terms of service. API keys are stored encrypted and I do not use them for any purpose other than providing the service."
                 android:textColor="@color/assistant_text"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5"
@@ -133,7 +133,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="5. User Responsibilities and Actions Performed by Aura"
+                android:text="5. User Responsibilities and Actions Performed by marvin"
                 android:textColor="@color/assistant_branding"
                 android:textSize="15sp"
                 android:textStyle="bold"
@@ -142,7 +142,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Aura acts only as your tool and performs actions based on your instructions. You are solely and fully responsible for all actions Aura takes on your device, including (but not limited to):\n\n\u2022 Sending messages or emails\n\u2022 Making purchases, payments, or financial transactions\n\u2022 Deleting content or changing settings\n\u2022 Any other app interactions\n\nYou must carefully review every proposed action before confirming it. Aura may make mistakes, misunderstand your intent, or take unintended actions.\n\nI am not responsible or liable if Aura causes you to lose money, makes unwanted purchases, incurs charges, or results in any financial loss, data loss, or other harm. You use Aura&#8217;s ability to control apps and perform actions entirely at your own risk."
+                android:text="marvin acts only as your tool and performs actions based on your instructions. You are solely and fully responsible for all actions marvin takes on your device, including (but not limited to):\n\n\u2022 Sending messages or emails\n\u2022 Making purchases, payments, or financial transactions\n\u2022 Deleting content or changing settings\n\u2022 Any other app interactions\n\nYou must carefully review every proposed action before confirming it. marvin may make mistakes, misunderstand your intent, or take unintended actions.\n\nI am not responsible or liable if marvin causes you to lose money, makes unwanted purchases, incurs charges, or results in any financial loss, data loss, or other harm. You use marvin&#8217;s ability to control apps and perform actions entirely at your own risk."
                 android:textColor="@color/assistant_text"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5"
@@ -161,7 +161,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="You may not use Aura to access accounts or perform actions without proper authorisation, engage in spam, phishing, harassment, or any unlawful activity, or attempt to reverse-engineer or interfere with the App."
+                android:text="You may not use marvin to access accounts or perform actions without proper authorisation, engage in spam, phishing, harassment, or any unlawful activity, or attempt to reverse-engineer or interfere with the App."
                 android:textColor="@color/assistant_text"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5"
@@ -180,7 +180,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="All rights in Aura belong to me. You receive a limited, personal, non-exclusive licence to use the App for your own private purposes only."
+                android:text="All rights in marvin belong to me. You receive a limited, personal, non-exclusive licence to use the App for your own private purposes only."
                 android:textColor="@color/assistant_text"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5"
@@ -199,7 +199,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Aura is provided &#8220;as is&#8221; and &#8220;as available&#8221;. I do not guarantee that it will be error-free, accurate, or that every action will execute exactly as intended.\n\nTo the fullest extent permitted by UK law:\n\n\u2022 I am not liable for any financial loss, unwanted purchases, payments, charges, loss of money, loss of data, or any other direct or indirect damages arising from your use of Aura or any actions it performs.\n\u2022 This includes (but is not limited to) situations where Aura misunderstands a command, hallucinates, fails to complete a task correctly, or takes an action you did not intend.\n\u2022 My total liability to you, if any, is limited to &#163;100.\n\nYou agree that you will not hold me liable for any consequences of Aura&#8217;s actions, even if those actions result in significant financial or other harm."
+                android:text="marvin is provided &#8220;as is&#8221; and &#8220;as available&#8221;. I do not guarantee that it will be error-free, accurate, or that every action will execute exactly as intended.\n\nTo the fullest extent permitted by UK law:\n\n\u2022 I am not liable for any financial loss, unwanted purchases, payments, charges, loss of money, loss of data, or any other direct or indirect damages arising from your use of marvin or any actions it performs.\n\u2022 This includes (but is not limited to) situations where marvin misunderstands a command, hallucinates, fails to complete a task correctly, or takes an action you did not intend.\n\u2022 My total liability to you, if any, is limited to &#163;100.\n\nYou agree that you will not hold me liable for any consequences of marvin&#8217;s actions, even if those actions result in significant financial or other harm."
                 android:textColor="@color/assistant_text"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5"
@@ -218,7 +218,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="I may suspend or stop providing Aura at any time. You may stop using and uninstall the App whenever you wish."
+                android:text="I may suspend or stop providing marvin at any time. You may stop using and uninstall the App whenever you wish."
                 android:textColor="@color/assistant_text"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5"

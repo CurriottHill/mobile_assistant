@@ -47,7 +47,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="This Privacy Policy explains how I (the developer of Aura) collect, use, and protect your information when you use the Aura Android app.\n\nMy contact email is curriotthillfarm@gmail.com."
+                android:text="This Privacy Policy explains how I (the developer of marvin) collect, use, and protect your information when you use the marvin Android app.\n\nMy contact email is curriotthillfarm@gmail.com."
                 android:textColor="@color/assistant_text"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5"
@@ -66,7 +66,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="\u2022 API keys you provide\n\u2022 Commands, preferences, or saved conversations (if you choose to save them)\n\u2022 Temporary screen content and screenshots (processed only while Aura is actively helping you &#8212; not stored on my servers unless you explicitly save them)\n\u2022 Accessibility Service data and basic anonymised device/usage information\n\nWhen you use an API key, the chosen LLM provider receives your prompt and any necessary screenshots according to their privacy policy."
+                android:text="\u2022 API keys you provide\n\u2022 Commands, preferences, or saved conversations (if you choose to save them)\n\u2022 Temporary screen content and screenshots (processed only while marvin is actively helping you &#8212; not stored on my servers unless you explicitly save them)\n\u2022 Accessibility Service data and basic anonymised device/usage information\n\nWhen you use an API key, the chosen LLM provider receives your prompt and any necessary screenshots according to their privacy policy."
                 android:textColor="@color/assistant_text"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5"
@@ -85,7 +85,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="To provide Aura&#8217;s features, route requests to your chosen LLM, improve the App (anonymised), and respond to support queries. I do not use your screen content or conversations to train models unless you explicitly opt in."
+                android:text="To provide marvin&#8217;s features, route requests to your chosen LLM, improve the App (anonymised), and respond to support queries. I do not use your screen content or conversations to train models unless you explicitly opt in."
                 android:textColor="@color/assistant_text"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5"
@@ -142,7 +142,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="You have rights to access, correct, and delete your data. Email curriotthillfarm@gmail.com to exercise them. You can also revoke Accessibility permissions or uninstall Aura at any time."
+                android:text="You have rights to access, correct, and delete your data. Email curriotthillfarm@gmail.com to exercise them. You can also revoke Accessibility permissions or uninstall marvin at any time."
                 android:textColor="@color/assistant_text"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5"
@@ -161,7 +161,7 @@
             <TextView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="Aura is not for users under 18."
+                android:text="marvin is not for users under 18."
                 android:textColor="@color/assistant_text"
                 android:textSize="14sp"
                 android:lineSpacingMultiplier="1.5"
